@@ -36,6 +36,7 @@ specs
 # 存檔與回放
 data/saves/
 data/replays/
+Records/
 
 # 系統檔案
 .DS_Store

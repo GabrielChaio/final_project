@@ -56,6 +56,52 @@ class LeaderboardManager:
     def get_records(difficulty, category):
         return LeaderboardManager.load().get(difficulty, {}).get(category, [])
 
+# ---Replay 管理---
+class ReplayManager:
+    RECORD_DIR = Path(__file__).resolve().parent / "Records"
+
+    @staticmethod
+    def ensure_record_dir():
+        ReplayManager.RECORD_DIR.mkdir(exist_ok=True)
+
+    @staticmethod
+    def save_replay(data):
+        ReplayManager.ensure_record_dir()
+        filename = f"replay_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filepath = ReplayManager.RECORD_DIR / filename
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return filepath
+
+    @staticmethod
+    def load_replay(filepath):
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not all(k in data for k in ("version", "board", "history")):
+            raise ValueError("無效的 Replay 檔案格式")
+        return data
+
+    @staticmethod
+    def get_replay_list():
+        ReplayManager.ensure_record_dir()
+        result = []
+        for path in sorted(ReplayManager.RECORD_DIR.glob("*.json"), reverse=True):
+            try:
+                data = ReplayManager.load_replay(path)
+                meta = data.get("meta", {})
+                result.append({
+                    "filepath": path,
+                    "player_id": meta.get("player_id", "?"),
+                    "player_color": meta.get("player_color", "#000000"),
+                    "difficulty": meta.get("difficulty", "?"),
+                    "result": meta.get("result", "?"),
+                    "time_sec": meta.get("time_sec", 0),
+                    "date": meta.get("date", "")[:10]
+                })
+            except Exception:
+                pass
+        return result
+
 # 將視窗置中顯示於螢幕中央
 def center_window(window):
     window.update_idletasks()  
@@ -421,30 +467,68 @@ class MinesweeperUI(tk.Frame):
                     self.expand(nr, nc)
         if not from_replay: self.check_win()
 
-    # 顯示自訂結束對話框，提供「查看回放」與「返回主選單」兩個選項
-    def show_custom_end_dialog(self, message):
-        dialog = tk.Toplevel(self)
-        dialog.title("遊戲結束")
-        dialog.geometry("300x150")
-        center_window(dialog)
-        dialog.transient(self)
-        dialog.grab_set()
-        tk.Label(dialog, text=message, font=("微軟正黑體", 11), pady=20).pack()
-        btn_frame = tk.Frame(dialog)
-        btn_frame.pack(pady=10)
-        tk.Button(btn_frame, text="查看回放", width=12, command=lambda: [dialog.destroy(), self.start_replay()]).pack(side="left", padx=10)
-        tk.Button(btn_frame, text="返回主選單", width=12, command=lambda: [dialog.destroy(), self.exit_game()]).pack(side="left", padx=10)
-    
-    # 遊戲結束流程：停止計時並顯示結果對話框
-    def end_game_flow(self, message):
-        self.timer_running = False 
-        if self.history: self.show_custom_end_dialog(message)
+    # 遊戲結束流程：停止計時並詢問是否儲存 Replay
+    def end_game_flow(self, message, result="lose"):
+        self.timer_running = False
+        if self.history:
+            self._show_end_dialog(message, result)
         else:
             messagebox.showinfo("遊戲結束", message)
             self.exit_game()
 
-    # 重置盤面視覺狀態並進入回放模式
-    def start_replay(self):
+    # 遊戲結束對話框：顯示結果並詢問是否儲存 Replay
+    def _show_end_dialog(self, message, result):
+        dialog = tk.Toplevel(self)
+        dialog.title("遊戲結束")
+        center_window(dialog)
+        dialog.transient(self)
+        dialog.grab_set()
+        tk.Label(dialog, text=message, font=("微軟正黑體", 11), pady=16).pack()
+        tk.Label(dialog, text="是否儲存 Replay？", font=("微軟正黑體", 10)).pack()
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=12)
+        tk.Button(btn_frame, text="儲存", width=10,
+                  command=lambda: self._save_replay_file(result, dialog)).pack(side="left", padx=10)
+        tk.Button(btn_frame, text="不儲存", width=10,
+                  command=lambda: [dialog.destroy(), self.exit_game()]).pack(side="left", padx=10)
+
+    # 打包本局所有資料為 Replay dict
+    def _build_replay_data(self, result):
+        difficulty = DIFFICULTY_PRESETS.get(
+            (self.logic.rows, self.logic.cols, self.logic.mines_count), "custom")
+        return {
+            "version": 1,
+            "meta": {
+                "player_id": self.player_id,
+                "player_color": self.player_color,
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "time_sec": self.start_time,
+                "result": result,
+                "difficulty": difficulty
+            },
+            "settings": {
+                "rows": self.logic.rows,
+                "cols": self.logic.cols,
+                "mines": self.logic.mines_count,
+                "radar_uses": self.radar_uses_left + self.radar_used_count
+            },
+            "board": self.logic.board,
+            "history": [list(h) for h in self.history]
+        }
+
+    # 將 Replay 儲存至 Records 資料夾並顯示成功訊息
+    def _save_replay_file(self, result, dialog):
+        data = self._build_replay_data(result)
+        filepath = ReplayManager.save_replay(data)
+        rel = filepath.relative_to(Path(__file__).resolve().parent)
+        dialog.destroy()
+        messagebox.showinfo("Replay 已儲存", str(rel))
+        self.exit_game()
+
+    # 重置盤面視覺狀態並進入回放模式；傳入 history 時覆蓋目前紀錄（供檔案回放使用）
+    def start_replay(self, history=None):
+        if history is not None:
+            self.history = history
         self.is_replaying = True
         self.timer_running = False
         self.radar_mines = set()
@@ -511,7 +595,7 @@ class MinesweeperUI(tk.Frame):
         if (self.logic.rows * self.logic.cols) - self.logic.get_revealed_count() == self.logic.mines_count:
             self.timer_running = False
             self._save_score()
-            self.end_game_flow(f"勝利！恭喜 {self.player_id}！\n總耗時: {self.start_time} 秒")
+            self.end_game_flow(f"勝利！恭喜 {self.player_id}！\n總耗時: {self.start_time} 秒", result="win")
 
     # 依難度與挑戰限制將本局成績寫入排行榜（自訂模式不入榜）
     def _save_score(self):
@@ -620,6 +704,76 @@ class LeaderboardWindow(tk.Toplevel):
             self.tree.insert("", "end", values=(
                 i, rec["player_id"], f"{rec['time']} 秒", rec["date"][:10]), tags=(tag,))
 
+# --- 回放清單視窗 ---
+class ReplayListWindow(tk.Toplevel):
+    _DIFF_LABEL   = {"easy": "簡單", "normal": "普通", "hard": "困難", "custom": "自訂"}
+    _RESULT_LABEL = {"win": "勝利", "lose": "失敗"}
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("回放記錄")
+        self.resizable(False, False)
+        self.parent = parent
+
+        self.tree = ttk.Treeview(self,
+            columns=("player", "diff", "result", "time", "date"),
+            show="headings", height=12)
+        for col, label, w in [("player", "玩家", 120), ("diff", "難度", 60),
+                               ("result", "結果", 60), ("time", "時間", 70), ("date", "日期", 110)]:
+            self.tree.heading(col, text=label)
+            self.tree.column(col, width=w, anchor="center")
+        self.tree.pack(padx=12, pady=(12, 4))
+
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(pady=(4, 12))
+        tk.Button(btn_frame, text="開始回放", width=10, command=self.play_selected).pack(side="left", padx=6)
+        tk.Button(btn_frame, text="刪除",     width=8,  command=self.delete_selected).pack(side="left", padx=6)
+        tk.Button(btn_frame, text="重新整理", width=10, command=self.refresh).pack(side="left", padx=6)
+
+        self._records = []
+        self.refresh()
+        center_window(self)
+        self.transient(parent)
+
+    def refresh(self):
+        self._records = ReplayManager.get_replay_list()
+        self.tree.delete(*self.tree.get_children())
+        for rec in self._records:
+            color = rec["player_color"]
+            tag = f"c{color[1:]}"
+            self.tree.tag_configure(tag, foreground=color)
+            self.tree.insert("", "end", values=(
+                rec["player_id"],
+                self._DIFF_LABEL.get(rec["difficulty"], rec["difficulty"]),
+                self._RESULT_LABEL.get(rec["result"], rec["result"]),
+                f"{rec['time_sec']} 秒",
+                rec["date"]
+            ), tags=(tag,))
+
+    def play_selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("提示", "請先選擇一筆回放記錄。")
+            return
+        idx = self.tree.index(sel[0])
+        try:
+            data = ReplayManager.load_replay(self._records[idx]["filepath"])
+        except Exception as e:
+            messagebox.showerror("載入失敗", str(e))
+            return
+        self.destroy()
+        self.parent.play_replay(data)
+
+    def delete_selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        idx = self.tree.index(sel[0])
+        rec = self._records[idx]
+        if messagebox.askyesno("確認刪除", f"確定要刪除此回放記錄？\n{rec['filepath'].name}"):
+            rec["filepath"].unlink()
+            self.refresh()
+
 # --- 主選單介面 ---
 class MainMenu(tk.Tk):
     def __init__(self):
@@ -663,7 +817,7 @@ class MainMenu(tk.Tk):
         # 主選單按鈕
         menu_options = [
             ("新遊戲", self.show_difficulty_menu),
-            ("載入遊戲", lambda: messagebox.showinfo("提示", "交給你了")),
+            ("回放記錄", lambda: ReplayListWindow(self)),
             ("查看排名", lambda: LeaderboardWindow(self)),
             ("退出遊戲", self.quit)
         ]
@@ -714,9 +868,26 @@ class MainMenu(tk.Tk):
     def start_game(self, r, c, m, p_id, p_color, radar_uses):
         pygame.mixer.music.stop()
         if hasattr(self, 'main_container'): self.main_container.destroy()
-        self.geometry("") 
+        self.geometry("")
         game_logic = MinesweeperLogic(r, c, m)
         self.game_ui = MinesweeperUI(self, game_logic, p_id, p_color, radar_uses, self.show_main_menu)
+        center_window(self)
+
+    # 從 Replay 檔案建立邏輯層並直接啟動回放（略過 reset_board，直接載入儲存的 board）
+    def play_replay(self, data):
+        pygame.mixer.music.stop()
+        if hasattr(self, 'main_container'): self.main_container.destroy()
+        self.geometry("")
+        s = data["settings"]
+        logic = MinesweeperLogic(s["rows"], s["cols"], s["mines"])
+        logic.board = data["board"]
+        logic.revealed = [[False] * s["cols"] for _ in range(s["rows"])]
+        logic.first_click = False
+        meta = data["meta"]
+        history = [tuple(h) for h in data["history"]]
+        self.game_ui = MinesweeperUI(self, logic, meta["player_id"], meta["player_color"],
+                                     s.get("radar_uses", 2), self.show_main_menu)
+        self.game_ui.start_replay(history=history)
         center_window(self)
 
 if __name__ == "__main__":
