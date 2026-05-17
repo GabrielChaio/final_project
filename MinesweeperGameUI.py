@@ -153,8 +153,9 @@ class GameSettingsDialog(tk.Toplevel):
             r = int(self.r_entry.get())
             c = int(self.c_entry.get())
             if 5 <= r <= 27 and 5 <= c <= 44:
-                max_m = max(2, int(r * c * 0.25))
-                self.mine_range_label.config(text=f"地雷數量 (2-{max_m}):")
+                min_m = max(2, int(r * c * 0.1))
+                max_m = int(r * c * 0.25)
+                self.mine_range_label.config(text=f"地雷數量 ({min_m}-{max_m}):")
         except ValueError:
             pass
 
@@ -176,8 +177,9 @@ class GameSettingsDialog(tk.Toplevel):
                 radar = int(self.radar_entry.get())
                 if not (5 <= r <= 27): raise ValueError("列數超出範圍 (5-27)")
                 if not (5 <= c <= 44): raise ValueError("行數超出範圍 (5-44)")
-                max_m = max(2, int(r * c * 0.35))
-                if not (2 <= m <= max_m): raise ValueError(f"地雷數量必須在 2 到 {max_m} 之間")
+                min_m = max(2, int(r * c * 0.1))
+                max_m = int(r * c * 0.25)
+                if not (min_m <= m <= max_m): raise ValueError(f"地雷數量必須在 {min_m} 到 {max_m} 之間")
                 if radar < 0: raise ValueError("探測次數不能為負數")
                 self.result = (r, c, m, p_id, self.player_color, radar)
                 self.destroy()
