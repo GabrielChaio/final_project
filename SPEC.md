@@ -8,11 +8,13 @@
 4. [類別與函式規格](#4-類別與函式規格)
    - [center_window](#41-center_window)
    - [LeaderboardManager](#42-leaderboardmanager)
-   - [MinesweeperLogic](#43-minesweeperlogic)
-   - [GameSettingsDialog](#44-gamesettingsdialog)
-   - [MinesweeperUI](#45-minesweeperui)
-   - [LeaderboardWindow](#46-leaderboardwindow)
-   - [MainMenu](#47-mainmenu)
+   - [ReplayManager](#43-replaymanager)
+   - [MinesweeperLogic](#44-minesweeperlogic)
+   - [GameSettingsDialog](#45-gamesettingsdialog)
+   - [MinesweeperUI](#46-minesweeperui)
+   - [LeaderboardWindow](#47-leaderboardwindow)
+   - [ReplayListWindow](#48-replaylistwindow)
+   - [MainMenu](#49-mainmenu)
 5. [遊戲邏輯規則](#5-遊戲邏輯規則)
 6. [資料結構](#6-資料結構)
 7. [事件流程](#7-事件流程)
@@ -40,9 +42,11 @@
 pillow    # 主選單背景圖片的載入與縮放
 pygame    # 背景音樂與音效播放
 tkinter   # 視窗、元件、對話框（Python 標準函式庫，無需安裝）
+pathlib   # 以 .py 檔所在位置為基準的跨平台路徑管理（Python 標準函式庫）
 random    # 地雷隨機佈置（Python 標準函式庫）
-json      # 排行榜本地儲存（Python 標準函式庫）
-datetime  # 排行榜日期戳記（Python 標準函式庫）
+json      # 排行榜與回放本地儲存（Python 標準函式庫）
+datetime  # 排行榜日期戳記與回放檔名（Python 標準函式庫）
+collections.deque  # BFS 展開與回放歷史（Python 標準函式庫）
 ```
 
 ---
@@ -63,11 +67,17 @@ MainMenu（tk.Tk）
 │       ├── MinesweeperLogic  ← 純邏輯層（無 UI 元件）
 │       └── 操作歷史 history（list）← 回放資料來源
 │
-└── LeaderboardWindow（tk.Toplevel）
-        排行榜查詢視窗，讀取 LeaderboardManager（靜態類別）
+├── LeaderboardWindow（tk.Toplevel）
+│       排行榜查詢視窗，讀取 LeaderboardManager（靜態類別）
+│
+└── ReplayListWindow（tk.Toplevel）
+        回放清單視窗，讀取 ReplayManager（靜態類別）
 
 LeaderboardManager（靜態工具類別，無 UI）
     負責 leaderboard.json 的讀寫與記錄管理
+
+ReplayManager（靜態工具類別，無 UI）
+    負責 Records/ 目錄下回放 JSON 的讀寫與清單管理
 ```
 
 ### 關係說明
@@ -111,7 +121,7 @@ class LeaderboardManager  # 純靜態工具類別，無需實例化
 
 | 屬性 | 說明 |
 |------|------|
-| `FILEPATH` | 排行榜檔案路徑（`"leaderboard.json"`，相對路徑） |
+| `FILEPATH` | `Path(__file__).resolve().parent / "leaderboard.json"`（以 .py 檔所在位置為基準） |
 
 #### 靜態方法
 
@@ -120,7 +130,7 @@ class LeaderboardManager  # 純靜態工具類別，無需實例化
 | `_empty()` | 回傳空排行榜 dict（3 難度 × 3 類型） |
 | `load() → dict` | 讀取 JSON；不存在時回傳空結構；損毀時顯示錯誤並回傳空結構 |
 | `save(data)` | 將 dict 寫入 JSON（`ensure_ascii=False, indent=2`） |
-| `add_record(difficulty, category, player_id, time_sec)` | 新增一筆記錄、排序、截取前 10 名後儲存 |
+| `add_record(difficulty, category, player_id, player_color, time_sec)` | 新增一筆記錄（含 ID 顏色）、排序、截取前 10 名後儲存 |
 | `get_records(difficulty, category) → list` | 回傳指定榜單的記錄列表 |
 
 #### JSON 結構
@@ -136,7 +146,7 @@ class LeaderboardManager  # 純靜態工具類別，無需實例化
 #### 單筆記錄格式
 
 ```json
-{ "player_id": "Alex", "time": 35, "date": "2026-05-17 20:31:22" }
+{ "player_id": "Alex", "player_color": "#ff0000", "time": 35, "date": "2026-05-17 20:31:22" }
 ```
 
 #### 榜單鍵值對照
@@ -149,7 +159,56 @@ class LeaderboardManager  # 純靜態工具類別，無需實例化
 
 ---
 
-### 4.3 `MinesweeperLogic`
+### 4.3 `ReplayManager`
+
+```python
+class ReplayManager  # 純靜態工具類別，無需實例化
+```
+
+**職責**：管理 `Records/` 目錄下回放 JSON 的儲存、讀取與清單查詢。
+
+#### 靜態屬性
+
+| 屬性 | 說明 |
+|------|------|
+| `RECORD_DIR` | `Path(__file__).resolve().parent / "Records"`（以 .py 檔所在位置為基準） |
+
+#### 靜態方法
+
+| 方法 | 說明 |
+|------|------|
+| `ensure_record_dir()` | 確保 `Records/` 目錄存在（`mkdir(exist_ok=True)`） |
+| `save_replay(data) → Path` | 以 `replay_YYYYMMDD_HHMMSS.json` 命名存檔，回傳儲存路徑 |
+| `load_replay(filepath) → dict` | 讀取並驗證 JSON（需含 `version`、`board`、`history` 欄位），失敗時回傳 `None` |
+| `get_replay_list() → list[dict]` | 掃描 `Records/*.json`，解析 meta，回傳依日期由新到舊排序的清單 |
+
+#### 回放 JSON 格式
+
+```json
+{
+  "version": 1,
+  "meta": {
+    "player_id": "Alex",
+    "player_color": "#ff0000",
+    "result": "win",
+    "date": "2026-05-17 20:31:22"
+  },
+  "settings": {
+    "rows": 8,
+    "cols": 8,
+    "mines": 10,
+    "radar_uses": 2
+  },
+  "board": [[-1, 0, ...], ...],
+  "history": [["click", 3, 4], ["flag", 1, 2], ["radar", 5, 6, "cross"], ...]
+}
+```
+
+> **注意**：`board` 儲存完整盤面（地雷分布），回放時直接指定 `logic.board = data["board"]` 並設 `logic.first_click = False`，不呼叫 `reset_board()`。`history` 中 tuple 序列化為 list，讀取後需轉回 `tuple`。
+
+---
+
+### 4.4 `MinesweeperLogic`
 
 **職責**：管理遊戲盤面狀態，不含任何 UI 邏輯。
 
@@ -188,7 +247,7 @@ def __init__(self, rows: int, cols: int, mines: int)
 
 ---
 
-### 4.4 `GameSettingsDialog`
+### 4.5 `GameSettingsDialog`
 
 ```python
 class GameSettingsDialog(tk.Toplevel)
@@ -205,6 +264,14 @@ class GameSettingsDialog(tk.Toplevel)
 | `default_c` | int | 8 | 預設行數 |
 | `default_m` | int | 8 | 預設地雷數 |
 | `is_custom` | bool | False | 是否顯示自訂輸入欄位 |
+| `default_id` | str | `"Unknown"` | 預填的玩家 ID（由 `MainMenu.last_player_id` 帶入） |
+| `default_color` | str | `"#000000"` | 預填的 ID 顏色（由 `MainMenu.last_player_color` 帶入） |
+
+#### 靜態方法
+
+| 方法 | 說明 |
+|------|------|
+| `_darken_if_bright(hex_color, threshold=0.7) → str` | 計算感知亮度 `(0.299R + 0.587G + 0.114B) / 255`；若超過 `threshold` 則等比縮放 RGB 至 `threshold / brightness`，回傳調暗後的 HEX 色碼，否則原色回傳 |
 
 #### 輸出格式
 
@@ -235,7 +302,7 @@ self.result = (rows, cols, mines, player_id, player_color, radar_uses)
 
 ---
 
-### 4.5 `MinesweeperUI`
+### 4.6 `MinesweeperUI`
 
 ```python
 class MinesweeperUI(tk.Frame)
@@ -294,8 +361,11 @@ class MinesweeperUI(tk.Frame)
 | `reveal_radar_cell(nr, nc)` | 揭示單一格：地雷顯示黃底 💣 並加入 `radar_mines`，安全格呼叫 expand |
 | `update_mine_count_label()` | 更新剩餘地雷標籤：`mines_count - len(radar_mines) - flag_count` |
 | `update_timer()` | 每 1000ms 遞增 `start_time` 並更新標籤 |
-| `end_game_flow(message)` | 停止計時，若有歷史則顯示自訂結束對話框 |
-| `start_replay()` | 重置盤面視覺、`radar_mines`、`flag_count` 與 `revealed`，進入回放模式 |
+| `end_game_flow(message, result="lose")` | 停止計時，若有歷史則呼叫 `_show_end_dialog()` 詢問是否儲存回放 |
+| `_show_end_dialog(message, result)` | 顯示遊戲結果與「是否儲存 Replay？」選項（儲存 / 不儲存） |
+| `_build_replay_data(result) → dict` | 封裝 version、meta、settings（`radar_uses = 剩餘次數 + 已用次數`）、board、history（tuple → list）為回放 dict |
+| `_save_replay_file(result, dialog)` | 呼叫 `ReplayManager.save_replay()`，成功後顯示相對路徑並呼叫 `exit_game()` |
+| `start_replay(history=None)` | 若傳入 `history` 則覆蓋 `self.history`；重置盤面視覺、`radar_mines`、`flag_count` 與 `revealed`，進入回放模式 |
 | `replay_step(index)` | 逐步重播 `history[index]`（含 `auto_reveal` 動作），每步間隔 500ms |
 | `exit_game()` | 停止音樂、銷毀 Frame、執行回呼函式 |
 
@@ -331,7 +401,7 @@ class MinesweeperUI(tk.Frame)
 
 ---
 
-### 4.6 `LeaderboardWindow`
+### 4.7 `LeaderboardWindow`
 
 ```python
 class LeaderboardWindow(tk.Toplevel)
@@ -365,9 +435,53 @@ def __init__(self, parent)
 
 兩個 OptionMenu 皆綁定 `command=lambda _: self.refresh()`，切換時即時刷新表格。
 
+#### 玩家 ID 顏色顯示
+
+`refresh()` 對每筆記錄取 `player_color`，以 `tag_configure(foreground=color)` 設定 Treeview tag，並在 `insert()` 時套用對應 tag，使 ID 欄位以玩家選擇的顏色呈現。
+
 ---
 
-### 4.7 `MainMenu`
+### 4.8 `ReplayListWindow`
+
+```python
+class ReplayListWindow(tk.Toplevel)
+```
+
+**職責**：顯示 `Records/` 目錄下的回放清單，提供播放、刪除、重新整理功能。
+
+#### 建構子
+
+```python
+def __init__(self, parent)  # parent 為 MainMenu 實例
+```
+
+建立視窗、`ttk.Treeview`（欄位：玩家、難度、結果、耗時、日期）及操作按鈕，呼叫 `refresh()` 載入初始清單後置中顯示。
+
+#### 屬性
+
+| 屬性 | 型別 | 說明 |
+|------|------|------|
+| `tree` | ttk.Treeview | 回放清單表格 |
+| `file_map` | dict | Treeview item id → 回放檔案路徑的映射 |
+
+#### 方法
+
+| 方法 | 說明 |
+|------|------|
+| `refresh()` | 呼叫 `ReplayManager.get_replay_list()` 重新載入清單；依 `_DIFF_LABEL` / `_RESULT_LABEL` 轉換顯示文字；玩家 ID 以其顏色著色 |
+| `play_selected()` | 取得選取項目對應的檔案路徑，呼叫 `ReplayManager.load_replay()`，再呼叫 `parent.play_replay(data)` |
+| `delete_selected()` | 確認後刪除對應 JSON 檔案並呼叫 `refresh()` |
+
+#### 顯示文字對照
+
+```python
+_DIFF_LABEL   = {"easy": "簡單", "normal": "普通", "hard": "困難", "custom": "自訂"}
+_RESULT_LABEL = {"win": "勝利", "lose": "失敗"}
+```
+
+---
+
+### 4.9 `MainMenu`
 
 ```python
 class MainMenu(tk.Tk)
@@ -375,14 +489,22 @@ class MainMenu(tk.Tk)
 
 **職責**：頂層視窗，管理主選單與難度選擇畫面的切換，以及遊戲的啟動。
 
+#### 屬性
+
+| 屬性 | 型別 | 說明 |
+|------|------|------|
+| `last_player_id` | str | 本次執行中上一局填寫的玩家 ID（預設 `"Unknown"`） |
+| `last_player_color` | str | 本次執行中上一局填寫的 ID 顏色（預設 `"#000000"`） |
+
 #### 方法
 
 | 方法 | 說明 |
 |------|------|
-| `show_main_menu()` | 顯示主選單（含背景圖、四個選單按鈕） |
+| `show_main_menu()` | 顯示主選單（含背景圖、四個選單按鈕；「載入遊戲」已更名為「回放記錄」） |
 | `show_difficulty_menu()` | 顯示難度選擇（簡單 / 普通 / 困難 / 自訂 + 返回） |
-| `pre_game_setup(r, c, m, is_custom)` | 開啟 `GameSettingsDialog`，取得結果後啟動遊戲 |
+| `pre_game_setup(r, c, m, is_custom)` | 開啟 `GameSettingsDialog`（傳入 `default_id` / `default_color`），取得結果後更新 `last_player_id` / `last_player_color` 並啟動遊戲 |
 | `start_game(r, c, m, p_id, p_color, radar_uses)` | 停止音樂、銷毀主選單容器、建立遊戲介面 |
+| `play_replay(data)` | 從回放 dict 建立 `MinesweeperLogic`（直接指定 `board`，不呼叫 `reset_board()`）、建立 `MinesweeperUI` 並呼叫 `start_replay(history=...)` |
 
 #### 畫面切換機制
 
@@ -442,6 +564,8 @@ class MainMenu(tk.Tk)
 ### 空白格自動展開
 
 `expand()` 使用 **BFS queue**（取代原有遞迴 DFS），翻開值為 0 的格子時自動向 8 個方向展開，直到碰到數字格為止。BFS 可避免大型地圖超出 Python 預設遞迴深度限制（1000）。
+
+`expand()` 是安全格插旗狀態的唯一清除點：若 BFS 到達一個尚未翻開但已插旗的安全格（探測器觸發或自動展開），`expand()` 負責將 `flag_count -= 1` 並清除旗標文字，確保剩餘地雷計數正確，且不會與 `reveal_radar_cell()` 發生重複計算。
 
 ### 點擊操作的封鎖規則
 
@@ -537,10 +661,17 @@ MainMenu.show_main_menu()
             → 第一次 on_click() → reset_board() + 啟動計時器
             → 持續 on_click() / on_right_click() / use_radar()
             → 踩雷 or check_win() → end_game_flow()
-              → show_custom_end_dialog()
-                → [回放] start_replay() → replay_step() → exit_game()
-                → [離開] exit_game()
+              → _show_end_dialog()
+                → [儲存] _save_replay_file() → ReplayManager.save_replay() → exit_game()
+                → [不儲存] exit_game()
                   → show_main_menu()
+
+MainMenu.show_main_menu()
+  → [回放記錄] ReplayListWindow
+    → play_selected() → ReplayManager.load_replay() → play_replay()
+      → MinesweeperUI（嵌入主視窗）
+        → start_replay(history=...) → replay_step() → exit_game()
+          → show_main_menu()
 ```
 
 ### 計時器流程
@@ -579,8 +710,9 @@ update_timer() 每 1000ms 遞增 start_time 並重新排程自身
 
 | 項目 | 狀態 | 說明 |
 |------|------|------|
-| 載入遊戲 | 預留 | 主選單按鈕僅顯示提示訊息，尚未實作存檔 / 讀檔 |
-| 查看排名 | 已實作 | 本地 JSON 排行榜，9 個榜單，前 10 名，`LeaderboardWindow` 顯示 |
+| 回放記錄 | 已實作 | 遊戲結束後可儲存回放至 `Records/`，主選單「回放記錄」可瀏覽、播放、刪除 |
+| 查看排名 | 已實作 | 本地 JSON 排行榜，9 個榜單，前 10 名，`LeaderboardWindow` 顯示（含 ID 顏色） |
+| 存檔 / 讀檔（遊戲中中斷） | 未實作 | 尚未支援在遊戲進行中途儲存狀態並於下次繼續 |
 | 視窗自適應 | 部分 | 遊戲畫面以 `geometry("")` 重設為自動大小，超大地圖可能超出螢幕 |
 | 計時器精度 | 整數秒 | 以 `after(1000)` 實作，不保證毫秒精度 |
 | 旗標計數 | 已實作 | 頂部「剩餘地雷」標籤即時顯示，可為負值 |
