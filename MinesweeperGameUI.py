@@ -203,6 +203,7 @@ class MinesweeperUI(tk.Frame):
         self.is_replaying = False
         self.history = []
         self.radar_mines = set()  # 記錄探測器揭示出的地雷格座標，禁止後續點擊操作
+        self.flag_count = 0  # 已插旗格子數，用於計算剩餘地雷顯示
 
         self.radar_uses_left = radar_uses 
         self.radar_type = tk.StringVar(value="none") 
@@ -229,8 +230,11 @@ class MinesweeperUI(tk.Frame):
         
         self.timer_label = tk.Label(top_frame, text="時間: 0 秒", font=("微軟正黑體", 12, "bold"))
         self.timer_label.pack(side="left", padx=20)
-        
-        player_label = tk.Label(top_frame, text=f"玩家: {self.player_id}", 
+
+        self.mine_count_label = tk.Label(top_frame, text=f"剩餘地雷: {self.logic.mines_count}", font=("微軟正黑體", 12, "bold"))
+        self.mine_count_label.pack(side="left", padx=10)
+
+        player_label = tk.Label(top_frame, text=f"玩家: {self.player_id}",
                                 font=("微軟正黑體", 12, "bold"), fg=self.player_color)
         player_label.pack(side="left", padx=10)
         
@@ -256,6 +260,7 @@ class MinesweeperUI(tk.Frame):
             for c in range(self.logic.cols):
                 btn = tk.Button(self, width=3, height=1, command=lambda r=r, c=c: self.on_click(r, c))
                 btn.bind("<Button-3>", lambda e, r=r, c=c: self.on_right_click(r, c))
+                btn.bind("<Double-Button-1>", lambda e, r=r, c=c: self.on_double_click(r, c))
                 btn.grid(row=r + 1, column=c + 1)
                 row_btns.append(btn)
             self.buttons.append(row_btns)
@@ -315,7 +320,43 @@ class MinesweeperUI(tk.Frame):
             self.history.append(('flag', r, c))
         curr = self.buttons[r][c].cget("text")
         self.buttons[r][c].config(text="🚩" if curr == "" else "", fg="red")
-    
+        self.flag_count += (1 if curr == "" else -1)
+        self.update_mine_count_label()
+
+    # 雙擊左鍵快速翻開：若周圍已標記數等於格子數字，自動翻開剩餘未標記格（踩雷仍會引爆）
+    def on_double_click(self, r, c, from_replay=False):
+        if self.is_replaying and not from_replay: return
+        if self.logic.first_click: return
+        if not self.logic.revealed[r][c]: return
+        val = self.logic.board[r][c]
+        if val <= 0: return
+        marked = sum(
+            1 for dr in [-1, 0, 1] for dc in [-1, 0, 1]
+            if not (dr == 0 and dc == 0)
+            and 0 <= r+dr < self.logic.rows and 0 <= c+dc < self.logic.cols
+            and (self.buttons[r+dr][c+dc].cget("text") == "🚩" or (r+dr, c+dc) in self.radar_mines)
+        )
+        if marked != val: return
+        if not from_replay:
+            self.history.append(('auto_reveal', r, c))
+        for dr in [-1, 0, 1]:
+            for dc in [-1, 0, 1]:
+                if dr == 0 and dc == 0: continue
+                nr, nc = r+dr, c+dc
+                if not (0 <= nr < self.logic.rows and 0 <= nc < self.logic.cols): continue
+                if self.logic.revealed[nr][nc]: continue
+                if self.buttons[nr][nc].cget("text") == "🚩": continue
+                if (nr, nc) in self.radar_mines: continue
+                if self.logic.board[nr][nc] == -1:
+                    if self.boom_sound and not self.is_replaying: self.boom_sound.play()
+                    self.timer_running = False
+                    self.buttons[nr][nc].config(text="💣", bg="red")
+                    if not from_replay: self.end_game_flow(f"玩家: {self.player_id}\n踩到地雷了！耗時: {self.start_time} 秒")
+                    return
+                else:
+                    self.expand(nr, nc)
+        if not from_replay: self.check_win()
+
     # 顯示自訂結束對話框，提供「查看回放」與「返回主選單」兩個選項
     def show_custom_end_dialog(self, message):
         dialog = tk.Toplevel(self)
@@ -343,6 +384,7 @@ class MinesweeperUI(tk.Frame):
         self.is_replaying = True
         self.timer_running = False
         self.radar_mines = set()
+        self.flag_count = 0
         self.logic.revealed = [[False for _ in range(self.logic.cols)] for _ in range(self.logic.rows)]
         for r in range(self.logic.rows):
             for c in range(self.logic.cols):
@@ -364,7 +406,13 @@ class MinesweeperUI(tk.Frame):
             elif action == 'flag':
                 r, c = record[1], record[2]
                 curr = self.buttons[r][c].cget("text")
-                if not self.logic.revealed[r][c]: self.buttons[r][c].config(text="🚩" if curr == "" else "", fg="red")
+                if not self.logic.revealed[r][c]:
+                    self.buttons[r][c].config(text="🚩" if curr == "" else "", fg="red")
+                    self.flag_count += (1 if curr == "" else -1)
+                    self.update_mine_count_label()
+            elif action == 'auto_reveal':
+                r, c = record[1], record[2]
+                self.on_double_click(r, c, from_replay=True)
             elif action == 'radar':
                 r, c, mode = record[1], record[2], record[3]
                 self.use_radar(r, c, mode)
@@ -382,6 +430,8 @@ class MinesweeperUI(tk.Frame):
             r, c = queue.popleft()
             if not (0 <= r < self.logic.rows and 0 <= c < self.logic.cols): continue
             if self.logic.revealed[r][c]: continue
+            if self.buttons[r][c].cget("text") == "🚩":
+                self.flag_count -= 1
             self.logic.revealed[r][c] = True
             val = self.logic.board[r][c]
             self.buttons[r][c].config(text=str(val) if val > 0 else "", relief=tk.SUNKEN, bg="#d1d1d1",
@@ -412,19 +462,27 @@ class MinesweeperUI(tk.Frame):
             for i in range(self.logic.rows): self.reveal_radar_cell(i, c)
         self.radar_type.set("none")
         self.radar_count_label.config(text=f"剩餘: {self.radar_uses_left}")
-        
+        self.update_mine_count_label()
+
         if not self.is_replaying:
             self.check_win()
 
-    # 揭示單一格子：地雷顯示黃底圖示，安全格直接翻開
+    # 揭示單一格子：地雷顯示黃底圖示（地雷格旗標在此處理），安全格交由 expand 處理旗標
     def reveal_radar_cell(self, nr, nc):
         if 0 <= nr < self.logic.rows and 0 <= nc < self.logic.cols:
             if self.logic.board[nr][nc] == -1:
+                if self.buttons[nr][nc].cget("text") == "🚩":
+                    self.flag_count -= 1
                 self.buttons[nr][nc].config(text="💣", fg="black", bg="#f1c40f")
                 self.radar_mines.add((nr, nc))
             else:
                 self.expand(nr, nc)
                 
+
+    # 更新剩餘地雷數量標籤：地雷總數 - 已被探測器揭示的地雷數 - 已插旗格數
+    def update_mine_count_label(self):
+        remaining = self.logic.mines_count - len(self.radar_mines) - self.flag_count
+        self.mine_count_label.config(text=f"剩餘地雷: {remaining}")
 
     # 每秒遞增計時器並更新顯示標籤，timer_running 為 False 時自動停止
     def update_timer(self):

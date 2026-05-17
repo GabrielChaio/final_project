@@ -200,6 +200,7 @@ class MinesweeperUI(tk.Frame)
 | `buttons` | list[list[tk.Button]] | 對應盤面的按鈕二維陣列 |
 | `history` | list[tuple] | 操作歷史，格式見下方 |
 | `radar_mines` | set[tuple[int,int]] | 探測器已揭示為地雷的格子座標集合，禁止後續左右鍵操作 |
+| `flag_count` | int | 目前已插旗格子數，用於計算剩餘地雷顯示（可為負值） |
 | `start_time` | int | 計時器秒數（每秒 +1） |
 | `timer_running` | bool | 計時器是否運行中 |
 | `is_replaying` | bool | 是否處於回放模式 |
@@ -209,26 +210,29 @@ class MinesweeperUI(tk.Frame)
 #### 操作歷史格式（`history`）
 
 ```python
-('click', row, col)         # 左鍵點擊
-('flag',  row, col)         # 右鍵旗標切換
-('radar', row, col, mode)   # 金屬探測器（mode: "cross" 或 "area"）
+('click',       row, col)        # 左鍵點擊
+('flag',        row, col)        # 右鍵旗標切換
+('radar',       row, col, mode)  # 金屬探測器（mode: "cross" 或 "area"）
+('auto_reveal', row, col)        # 雙擊左鍵自動翻開周圍格
 ```
 
 #### 主要方法
 
 | 方法 | 說明 |
 |------|------|
-| `create_widgets()` | 建立頂部資訊列、工具面板（探測器）、盤面按鈕格 |
+| `create_widgets()` | 建立頂部資訊列（含剩餘地雷標籤）、工具面板（探測器）、盤面按鈕格 |
 | `on_click(r, c, from_replay)` | 左鍵點擊處理；已插旗或探測器地雷格無反應，否則依模式分派至探測器或翻格 |
-| `on_right_click(r, c, from_replay)` | 右鍵旗標切換；首格未翻則警告，探測器地雷格與已翻開的格子不可插旗 |
-| `expand(r, c)` | 遞迴翻開格子；值為 0 時自動展開相鄰 8 格（DFS） |
+| `on_right_click(r, c, from_replay)` | 右鍵旗標切換；首格未翻則警告，探測器地雷格與已翻開的格子不可插旗；更新 `flag_count` 與剩餘地雷標籤 |
+| `on_double_click(r, c, from_replay)` | 雙擊左鍵快速翻開；對已翻數字格，若周圍標記數等於格子數字則自動翻開剩餘未標記格 |
+| `expand(r, c)` | BFS 翻開格子；值為 0 時自動展開相鄰 8 格 |
 | `check_win()` | 判斷剩餘未翻格數是否等於地雷數 |
-| `use_radar(r, c, mode)` | 執行探測器效果並更新剩餘次數 |
+| `use_radar(r, c, mode)` | 執行探測器效果、更新剩餘次數與剩餘地雷標籤 |
 | `reveal_radar_cell(nr, nc)` | 揭示單一格：地雷顯示黃底 💣 並加入 `radar_mines`，安全格呼叫 expand |
+| `update_mine_count_label()` | 更新剩餘地雷標籤：`mines_count - len(radar_mines) - flag_count` |
 | `update_timer()` | 每 1000ms 遞增 `start_time` 並更新標籤 |
 | `end_game_flow(message)` | 停止計時，若有歷史則顯示自訂結束對話框 |
-| `start_replay()` | 重置盤面視覺、`radar_mines` 與 `revealed`，進入回放模式 |
-| `replay_step(index)` | 逐步重播 `history[index]`，每步間隔 500ms |
+| `start_replay()` | 重置盤面視覺、`radar_mines`、`flag_count` 與 `revealed`，進入回放模式 |
+| `replay_step(index)` | 逐步重播 `history[index]`（含 `auto_reveal` 動作），每步間隔 500ms |
 | `exit_game()` | 停止音樂、銷毀 Frame、執行回呼函式 |
 
 #### 探測器模式行為
@@ -349,6 +353,33 @@ class MainMenu(tk.Tk)
 | 未翻開且首格未點擊（`first_click == True`） | 允許（翻開首格） | 警告後無反應 |
 | 未翻開、首格已點擊、無旗無標記 | 允許 | 允許（插旗） |
 
+### 剩餘地雷數量顯示
+
+頂部資訊列中的**剩餘地雷**標籤即時顯示：
+
+```
+剩餘地雷 = mines_count - len(radar_mines) - flag_count
+```
+
+- `radar_mines`：探測器已揭示為地雷的格子數（每次 `reveal_radar_cell` 加入地雷格時增加）
+- `flag_count`：目前插旗格數（每次 `on_right_click` 插旗 +1、取消旗 -1）
+- 值可為負數（玩家插錯旗時）
+- 呼叫 `update_mine_count_label()` 更新；觸發時機：插旗 / 取消旗、使用探測器後、回放中旗標重播時
+- 回放開始時重置 `flag_count = 0`
+
+### 雙擊左鍵自動翻開（快速開格）
+
+對**已翻開的數字格**雙擊左鍵時執行以下流程：
+
+1. 若格子未翻開、為空格（值 0）或地雷（值 -1），不處理。
+2. 計算周圍 8 格中「已插旗（按鈕文字 == 🚩）或已被探測器標記（`(r,c) in radar_mines`）」的格子數 `marked`。
+3. 若 `marked != val`（格子數字），不處理。
+4. 條件滿足則自動翻開周圍所有「未插旗且未探測標記」的格子：
+   - 若翻開的格子為地雷 → 引爆並結束遊戲。
+   - 若翻開的格子為安全格 → 呼叫 `expand()`。
+5. 翻開完畢後呼叫 `check_win()` 判斷是否勝利。
+6. 此操作記入 `history`，格式為 `('auto_reveal', row, col)`，回放時重新執行 `on_double_click`。
+
 ### 金屬探測器不觸發遊戲結束
 
 探測器揭示地雷時僅顯示視覺提示（黃底 💣），不觸發爆炸邏輯。揭示完畢後仍會呼叫 `check_win()` 判斷是否達成勝利條件。
@@ -452,5 +483,5 @@ update_timer() 每 1000ms 遞增 start_time 並重新排程自身
 | 查看排名 | 預留 | 主選單按鈕僅顯示提示訊息，尚未實作排行榜 |
 | 視窗自適應 | 部分 | 遊戲畫面以 `geometry("")` 重設為自動大小，超大地圖可能超出螢幕 |
 | 計時器精度 | 整數秒 | 以 `after(1000)` 實作，不保證毫秒精度 |
-| 旗標計數 | 無 | 目前無旗標計數顯示，無法與地雷數比較 |
+| 旗標計數 | 已實作 | 頂部「剩餘地雷」標籤即時顯示，可為負值 |
 | 遞迴展開深度 | 已修正 | `expand()` 已改為 BFS queue，不受 Python 遞迴深度限制影響 |
