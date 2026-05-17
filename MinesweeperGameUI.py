@@ -245,11 +245,12 @@ class MinesweeperUI(tk.Frame):
     # 右鍵點擊事件：未翻第一格則警告，探測器地雷格與已翻開的格子不可插旗
     def on_right_click(self, r, c, from_replay=False):
         if self.is_replaying and not from_replay: return
-        if self.logic.revealed[r][c]: return
         if not from_replay:
-            if self.logic.first_click:
+            if self.logic.first_click:  # 盤面尚未初始化，revealed 為空列表，須在此提前攔截
                 messagebox.showwarning("警告", "請先點開第一格後再插旗！")
                 return
+        if self.logic.revealed[r][c]: return  # 此時 first_click 必為 False，revealed 已初始化，可安全存取
+        if not from_replay:
             if (r, c) in self.radar_mines: return
             self.history.append(('flag', r, c))
         curr = self.buttons[r][c].cget("text")
