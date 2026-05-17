@@ -1,11 +1,58 @@
 import tkinter as tk
-from tkinter import messagebox, colorchooser
+from tkinter import messagebox, colorchooser, ttk
 from PIL import Image, ImageTk
 import random
 import pygame
+import json
 from collections import deque
+from datetime import datetime
 
 MAX_GENERATION_ATTEMPTS = 1000  # 地圖生成失敗保護：超過此次數則回報錯誤
+DIFFICULTY_PRESETS = {(8, 8, 10): "easy", (12, 12, 30): "normal", (16, 16, 60): "hard"}
+
+# ---排行榜管理---
+class LeaderboardManager:
+    FILEPATH = "leaderboard.json"
+
+    @staticmethod
+    def _empty():
+        return {
+            "easy":   {"normal": [], "no_tool": [], "no_tool_no_flag": []},
+            "normal": {"normal": [], "no_tool": [], "no_tool_no_flag": []},
+            "hard":   {"normal": [], "no_tool": [], "no_tool_no_flag": []}
+        }
+
+    @staticmethod
+    def load():
+        try:
+            with open(LeaderboardManager.FILEPATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return LeaderboardManager._empty()
+        except Exception:
+            messagebox.showerror("排行榜錯誤", "leaderboard.json 損毀，已重建空排行榜。")
+            return LeaderboardManager._empty()
+
+    @staticmethod
+    def save(data):
+        with open(LeaderboardManager.FILEPATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def add_record(difficulty, category, player_id, time_sec):
+        data = LeaderboardManager.load()
+        data[difficulty][category].append({
+            "player_id": player_id,
+            "time": time_sec,
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+        data[difficulty][category].sort(key=lambda x: x["time"])
+        data[difficulty][category] = data[difficulty][category][:10]
+        LeaderboardManager.save(data)
+
+    @staticmethod
+    def get_records(difficulty, category):
+        return LeaderboardManager.load().get(difficulty, {}).get(category, [])
 
 # 將視窗置中顯示於螢幕中央
 def center_window(window):
@@ -203,7 +250,9 @@ class MinesweeperUI(tk.Frame):
         self.is_replaying = False
         self.history = []
         self.radar_mines = set()  # 記錄探測器揭示出的地雷格座標，禁止後續點擊操作
-        self.flag_count = 0  # 已插旗格子數，用於計算剩餘地雷顯示
+        self.flag_count = 0       # 已插旗格子數，用於計算剩餘地雷顯示
+        self.radar_used_count = 0 # 累計使用探測器次數，判定無道具榜資格
+        self.flag_used_count = 0  # 曾插旗次數（取消後仍計），判定無道具無旗子榜資格
 
         self.radar_uses_left = radar_uses 
         self.radar_type = tk.StringVar(value="none") 
@@ -321,6 +370,8 @@ class MinesweeperUI(tk.Frame):
         curr = self.buttons[r][c].cget("text")
         self.buttons[r][c].config(text="🚩" if curr == "" else "", fg="red")
         self.flag_count += (1 if curr == "" else -1)
+        if not from_replay and curr == "":
+            self.flag_used_count += 1
         self.update_mine_count_label()
 
     # 雙擊左鍵快速翻開：若周圍已標記數等於格子數字，自動翻開剩餘未標記格（踩雷仍會引爆）
@@ -446,7 +497,19 @@ class MinesweeperUI(tk.Frame):
     def check_win(self):
         if (self.logic.rows * self.logic.cols) - self.logic.get_revealed_count() == self.logic.mines_count:
             self.timer_running = False
+            self._save_score()
             self.end_game_flow(f"勝利！恭喜 {self.player_id}！\n總耗時: {self.start_time} 秒")
+
+    # 依難度與挑戰限制將本局成績寫入排行榜（自訂模式不入榜）
+    def _save_score(self):
+        difficulty = DIFFICULTY_PRESETS.get((self.logic.rows, self.logic.cols, self.logic.mines_count))
+        if difficulty is None:
+            return
+        LeaderboardManager.add_record(difficulty, "normal", self.player_id, self.start_time)
+        if self.radar_used_count == 0:
+            LeaderboardManager.add_record(difficulty, "no_tool", self.player_id, self.start_time)
+            if self.flag_used_count == 0:
+                LeaderboardManager.add_record(difficulty, "no_tool_no_flag", self.player_id, self.start_time)
 
     # 執行金屬探測器效果，依模式揭示十字或九宮格範圍內的所有格子
     def use_radar(self, r, c, mode):
@@ -454,6 +517,7 @@ class MinesweeperUI(tk.Frame):
         if not self.is_replaying:
             self.history.append(('radar', r, c, mode))
             self.radar_uses_left -= 1
+            self.radar_used_count += 1
         if mode == "area":
             for dr in [-1, 0, 1]:
                 for dc in [-1, 0, 1]: self.reveal_radar_cell(r + dr, c + dc)
@@ -497,6 +561,49 @@ class MinesweeperUI(tk.Frame):
         self.destroy()
         self.on_close_callback()
 
+# --- 排行榜視窗 ---
+class LeaderboardWindow(tk.Toplevel):
+    _DIFF = {"簡單": "easy", "普通": "normal", "困難": "hard"}
+    _CAT  = {"無限制": "normal", "無道具": "no_tool", "無道具無旗子": "no_tool_no_flag"}
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("排行榜")
+        self.resizable(False, False)
+
+        top_frame = tk.Frame(self, pady=8)
+        top_frame.pack()
+
+        tk.Label(top_frame, text="難度:", font=("微軟正黑體", 11)).pack(side="left")
+        self.diff_var = tk.StringVar(value="簡單")
+        tk.OptionMenu(top_frame, self.diff_var, "簡單", "普通", "困難",
+                      command=lambda _: self.refresh()).pack(side="left", padx=4)
+
+        tk.Label(top_frame, text="挑戰類型:", font=("微軟正黑體", 11)).pack(side="left", padx=(12, 0))
+        self.cat_var = tk.StringVar(value="無限制")
+        tk.OptionMenu(top_frame, self.cat_var, "無限制", "無道具", "無道具無旗子",
+                      command=lambda _: self.refresh()).pack(side="left", padx=4)
+
+        self.tree = ttk.Treeview(self, columns=("rank", "player", "time", "date"),
+                                 show="headings", height=10)
+        for col, label, w in [("rank", "排名", 50), ("player", "玩家 ID", 120),
+                               ("time", "時間", 80), ("date", "日期", 120)]:
+            self.tree.heading(col, text=label)
+            self.tree.column(col, width=w, anchor="center")
+        self.tree.pack(padx=12, pady=(0, 12))
+
+        self.refresh()
+        center_window(self)
+        self.transient(parent)
+
+    def refresh(self):
+        records = LeaderboardManager.get_records(
+            self._DIFF[self.diff_var.get()], self._CAT[self.cat_var.get()])
+        self.tree.delete(*self.tree.get_children())
+        for i, rec in enumerate(records, 1):
+            self.tree.insert("", "end", values=(
+                i, rec["player_id"], f"{rec['time']} 秒", rec["date"][:10]))
+
 # --- 主選單介面 ---
 class MainMenu(tk.Tk):
     def __init__(self):
@@ -539,7 +646,7 @@ class MainMenu(tk.Tk):
         menu_options = [
             ("新遊戲", self.show_difficulty_menu),
             ("載入遊戲", lambda: messagebox.showinfo("提示", "交給你了")),
-            ("查看排名", lambda: messagebox.showinfo("提示", "交給你了")),
+            ("查看排名", lambda: LeaderboardWindow(self)),
             ("退出遊戲", self.quit)
         ]
         

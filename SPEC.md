@@ -7,10 +7,12 @@
 3. [架構設計](#3-架構設計)
 4. [類別與函式規格](#4-類別與函式規格)
    - [center_window](#41-center_window)
-   - [MinesweeperLogic](#42-minesweeperlogic)
-   - [GameSettingsDialog](#43-gamesettingsdialog)
-   - [MinesweeperUI](#44-minesweeperui)
-   - [MainMenu](#45-mainmenu)
+   - [LeaderboardManager](#42-leaderboardmanager)
+   - [MinesweeperLogic](#43-minesweeperlogic)
+   - [GameSettingsDialog](#44-gamesettingsdialog)
+   - [MinesweeperUI](#45-minesweeperui)
+   - [LeaderboardWindow](#46-leaderboardwindow)
+   - [MainMenu](#47-mainmenu)
 5. [遊戲邏輯規則](#5-遊戲邏輯規則)
 6. [資料結構](#6-資料結構)
 7. [事件流程](#7-事件流程)
@@ -39,6 +41,8 @@ pillow    # 主選單背景圖片的載入與縮放
 pygame    # 背景音樂與音效播放
 tkinter   # 視窗、元件、對話框（Python 標準函式庫，無需安裝）
 random    # 地雷隨機佈置（Python 標準函式庫）
+json      # 排行榜本地儲存（Python 標準函式庫）
+datetime  # 排行榜日期戳記（Python 標準函式庫）
 ```
 
 ---
@@ -54,10 +58,16 @@ MainMenu（tk.Tk）
 ├── GameSettingsDialog（tk.Toplevel）
 │       開始遊戲前的模態設定視窗
 │
-└── MinesweeperUI（tk.Frame）
-        遊戲主介面，內含：
-        ├── MinesweeperLogic  ← 純邏輯層（無 UI 元件）
-        └── 操作歷史 history（list）← 回放資料來源
+├── MinesweeperUI（tk.Frame）
+│       遊戲主介面，內含：
+│       ├── MinesweeperLogic  ← 純邏輯層（無 UI 元件）
+│       └── 操作歷史 history（list）← 回放資料來源
+│
+└── LeaderboardWindow（tk.Toplevel）
+        排行榜查詢視窗，讀取 LeaderboardManager（靜態類別）
+
+LeaderboardManager（靜態工具類別，無 UI）
+    負責 leaderboard.json 的讀寫與記錄管理
 ```
 
 ### 關係說明
@@ -73,6 +83,7 @@ MainMenu（tk.Tk）
 
 ### 4.1 `center_window`
 
+
 ```python
 def center_window(window)
 ```
@@ -84,11 +95,61 @@ def center_window(window)
 2. 讀取視窗寬高與螢幕解析度。
 3. 以 `geometry('+x+y')` 設定視窗位置。
 
-**使用位置**：`GameSettingsDialog.__init__`、`MainMenu.__init__`、`MinesweeperUI.show_custom_end_dialog`、`MainMenu.start_game`
+**使用位置**：`GameSettingsDialog.__init__`、`MainMenu.__init__`、`MinesweeperUI.show_custom_end_dialog`、`MainMenu.start_game`、`LeaderboardWindow.__init__`
 
 ---
 
-### 4.2 `MinesweeperLogic`
+### 4.2 `LeaderboardManager`
+
+```python
+class LeaderboardManager  # 純靜態工具類別，無需實例化
+```
+
+**職責**：管理 `leaderboard.json` 的讀取、寫入與記錄新增。
+
+#### 靜態屬性
+
+| 屬性 | 說明 |
+|------|------|
+| `FILEPATH` | 排行榜檔案路徑（`"leaderboard.json"`，相對路徑） |
+
+#### 靜態方法
+
+| 方法 | 說明 |
+|------|------|
+| `_empty()` | 回傳空排行榜 dict（3 難度 × 3 類型） |
+| `load() → dict` | 讀取 JSON；不存在時回傳空結構；損毀時顯示錯誤並回傳空結構 |
+| `save(data)` | 將 dict 寫入 JSON（`ensure_ascii=False, indent=2`） |
+| `add_record(difficulty, category, player_id, time_sec)` | 新增一筆記錄、排序、截取前 10 名後儲存 |
+| `get_records(difficulty, category) → list` | 回傳指定榜單的記錄列表 |
+
+#### JSON 結構
+
+```json
+{
+  "easy":   { "normal": [], "no_tool": [], "no_tool_no_flag": [] },
+  "normal": { "normal": [], "no_tool": [], "no_tool_no_flag": [] },
+  "hard":   { "normal": [], "no_tool": [], "no_tool_no_flag": [] }
+}
+```
+
+#### 單筆記錄格式
+
+```json
+{ "player_id": "Alex", "time": 35, "date": "2026-05-17 20:31:22" }
+```
+
+#### 榜單鍵值對照
+
+| 難度顯示 | JSON key | 挑戰類型顯示 | JSON key |
+|----------|----------|--------------|----------|
+| 簡單 | `"easy"` | 無限制 | `"normal"` |
+| 普通 | `"normal"` | 無道具 | `"no_tool"` |
+| 困難 | `"hard"` | 無道具無旗子 | `"no_tool_no_flag"` |
+
+---
+
+### 4.3 `MinesweeperLogic`
 
 **職責**：管理遊戲盤面狀態，不含任何 UI 邏輯。
 
@@ -127,7 +188,7 @@ def __init__(self, rows: int, cols: int, mines: int)
 
 ---
 
-### 4.3 `GameSettingsDialog`
+### 4.4 `GameSettingsDialog`
 
 ```python
 class GameSettingsDialog(tk.Toplevel)
@@ -174,7 +235,7 @@ self.result = (rows, cols, mines, player_id, player_color, radar_uses)
 
 ---
 
-### 4.4 `MinesweeperUI`
+### 4.5 `MinesweeperUI`
 
 ```python
 class MinesweeperUI(tk.Frame)
@@ -201,6 +262,8 @@ class MinesweeperUI(tk.Frame)
 | `history` | list[tuple] | 操作歷史，格式見下方 |
 | `radar_mines` | set[tuple[int,int]] | 探測器已揭示為地雷的格子座標集合，禁止後續左右鍵操作 |
 | `flag_count` | int | 目前已插旗格子數，用於計算剩餘地雷顯示（可為負值） |
+| `radar_used_count` | int | 本局累計使用探測器次數；0 表示符合無道具榜資格 |
+| `flag_used_count` | int | 本局曾插旗次數（取消後仍計）；0 表示符合無道具無旗子榜資格 |
 | `start_time` | int | 計時器秒數（每秒 +1） |
 | `timer_running` | bool | 計時器是否運行中 |
 | `is_replaying` | bool | 是否處於回放模式 |
@@ -225,8 +288,9 @@ class MinesweeperUI(tk.Frame)
 | `on_right_click(r, c, from_replay)` | 右鍵旗標切換；首格未翻則警告，探測器地雷格與已翻開的格子不可插旗；更新 `flag_count` 與剩餘地雷標籤 |
 | `on_double_click(r, c, from_replay)` | 雙擊左鍵快速翻開；對已翻數字格，若周圍標記數等於格子數字則自動翻開剩餘未標記格 |
 | `expand(r, c)` | BFS 翻開格子；值為 0 時自動展開相鄰 8 格 |
-| `check_win()` | 判斷剩餘未翻格數是否等於地雷數 |
-| `use_radar(r, c, mode)` | 執行探測器效果、更新剩餘次數與剩餘地雷標籤 |
+| `check_win()` | 判斷剩餘未翻格數是否等於地雷數；勝利時呼叫 `_save_score()` |
+| `_save_score()` | 依難度與使用紀錄判定可入榜的類型，逐一呼叫 `LeaderboardManager.add_record()` |
+| `use_radar(r, c, mode)` | 執行探測器效果、更新剩餘次數與剩餘地雷標籤；累計 `radar_used_count` |
 | `reveal_radar_cell(nr, nc)` | 揭示單一格：地雷顯示黃底 💣 並加入 `radar_mines`，安全格呼叫 expand |
 | `update_mine_count_label()` | 更新剩餘地雷標籤：`mines_count - len(radar_mines) - flag_count` |
 | `update_timer()` | 每 1000ms 遞增 `start_time` 並更新標籤 |
@@ -267,7 +331,43 @@ class MinesweeperUI(tk.Frame)
 
 ---
 
-### 4.5 `MainMenu`
+### 4.6 `LeaderboardWindow`
+
+```python
+class LeaderboardWindow(tk.Toplevel)
+```
+
+**職責**：排行榜查詢視窗，提供難度與挑戰類型篩選並以表格顯示前 10 名成績。
+
+#### 建構子
+
+```python
+def __init__(self, parent)
+```
+
+建立視窗、兩個 `tk.OptionMenu`、`ttk.Treeview`，呼叫 `refresh()` 載入初始資料後置中顯示。
+
+#### 屬性
+
+| 屬性 | 型別 | 說明 |
+|------|------|------|
+| `diff_var` | tk.StringVar | 目前選擇的難度（`"簡單"` / `"普通"` / `"困難"`） |
+| `cat_var` | tk.StringVar | 目前選擇的挑戰類型 |
+| `tree` | ttk.Treeview | 排行榜表格（欄位：排名、玩家 ID、時間、日期） |
+
+#### 方法
+
+| 方法 | 說明 |
+|------|------|
+| `refresh()` | 依目前 OptionMenu 值向 `LeaderboardManager.get_records()` 取資料並刷新 Treeview |
+
+#### OptionMenu 觸發
+
+兩個 OptionMenu 皆綁定 `command=lambda _: self.refresh()`，切換時即時刷新表格。
+
+---
+
+### 4.7 `MainMenu`
 
 ```python
 class MainMenu(tk.Tk)
@@ -480,7 +580,7 @@ update_timer() 每 1000ms 遞增 start_time 並重新排程自身
 | 項目 | 狀態 | 說明 |
 |------|------|------|
 | 載入遊戲 | 預留 | 主選單按鈕僅顯示提示訊息，尚未實作存檔 / 讀檔 |
-| 查看排名 | 預留 | 主選單按鈕僅顯示提示訊息，尚未實作排行榜 |
+| 查看排名 | 已實作 | 本地 JSON 排行榜，9 個榜單，前 10 名，`LeaderboardWindow` 顯示 |
 | 視窗自適應 | 部分 | 遊戲畫面以 `geometry("")` 重設為自動大小，超大地圖可能超出螢幕 |
 | 計時器精度 | 整數秒 | 以 `after(1000)` 實作，不保證毫秒精度 |
 | 旗標計數 | 已實作 | 頂部「剩餘地雷」標籤即時顯示，可為負值 |
