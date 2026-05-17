@@ -157,9 +157,12 @@ self.result = (rows, cols, mines, player_id, player_color, radar_uses)
 
 | 欄位 | 限制 | 錯誤訊息 |
 |------|------|----------|
-| 列數 / 行數 | 3 ≤ 值 ≤ 30 | 「地圖大小超出範圍 (3-30)」 |
+| 列數 | 3 ≤ 值 ≤ 27 | 「列數超出範圍 (3-27)」 |
+| 行數 | 3 ≤ 值 ≤ 44 | 「行數超出範圍 (3-44)」 |
 | 地雷數 | 1 ≤ 值 ≤ (列 × 行 − 9) | 「地雷數量必須在 1 到 N 之間」 |
 | 探測次數 | 值 ≥ 0 | 「探測次數不能為負數」 |
+
+> **上限說明**：列 27、行 44 為實測在一般螢幕（1920×1080）下不超出可視範圍的最大值。列與行上限不同，因此驗證訊息分別呈現。
 
 驗證失敗時以 `messagebox.showerror` 顯示錯誤訊息，對話框不關閉。
 
@@ -190,6 +193,7 @@ class MinesweeperUI(tk.Frame)
 |------|------|------|
 | `buttons` | list[list[tk.Button]] | 對應盤面的按鈕二維陣列 |
 | `history` | list[tuple] | 操作歷史，格式見下方 |
+| `radar_mines` | set[tuple[int,int]] | 探測器已揭示為地雷的格子座標集合，禁止後續左右鍵操作 |
 | `start_time` | int | 計時器秒數（每秒 +1） |
 | `timer_running` | bool | 計時器是否運行中 |
 | `is_replaying` | bool | 是否處於回放模式 |
@@ -209,15 +213,15 @@ class MinesweeperUI(tk.Frame)
 | 方法 | 說明 |
 |------|------|
 | `create_widgets()` | 建立頂部資訊列、工具面板（探測器）、盤面按鈕格 |
-| `on_click(r, c, from_replay)` | 左鍵點擊處理，依模式分派至翻格或探測器 |
-| `on_right_click(r, c, from_replay)` | 右鍵旗標切換（已翻開的格子不可插旗） |
+| `on_click(r, c, from_replay)` | 左鍵點擊處理；已插旗或探測器地雷格無反應，否則依模式分派至探測器或翻格 |
+| `on_right_click(r, c, from_replay)` | 右鍵旗標切換；首格未翻則警告，探測器地雷格與已翻開的格子不可插旗 |
 | `expand(r, c)` | 遞迴翻開格子；值為 0 時自動展開相鄰 8 格（DFS） |
 | `check_win()` | 判斷剩餘未翻格數是否等於地雷數 |
 | `use_radar(r, c, mode)` | 執行探測器效果並更新剩餘次數 |
-| `reveal_radar_cell(nr, nc)` | 揭示單一格：地雷顯示黃底 💣，安全格呼叫 expand |
+| `reveal_radar_cell(nr, nc)` | 揭示單一格：地雷顯示黃底 💣 並加入 `radar_mines`，安全格呼叫 expand |
 | `update_timer()` | 每 1000ms 遞增 `start_time` 並更新標籤 |
 | `end_game_flow(message)` | 停止計時，若有歷史則顯示自訂結束對話框 |
-| `start_replay()` | 重置盤面視覺，進入回放模式 |
+| `start_replay()` | 重置盤面視覺與 `radar_mines`，進入回放模式 |
 | `replay_step(index)` | 逐步重播 `history[index]`，每步間隔 500ms |
 | `exit_game()` | 停止音樂、銷毀 Frame、執行回呼函式 |
 
@@ -305,6 +309,16 @@ class MainMenu(tk.Tk)
 ### 空白格自動展開
 
 `expand()` 使用遞迴 DFS，翻開值為 0 的格子時自動向 8 個方向展開，直到碰到數字格為止。
+
+### 點擊操作的封鎖規則
+
+| 格子狀態 | 左鍵 | 右鍵 |
+|----------|------|------|
+| 已翻開（`revealed == True`） | 無反應 | 無反應 |
+| 已插旗（按鈕文字 == 🚩） | 無反應 | 允許（取消插旗） |
+| 探測器標記地雷（`(r,c) in radar_mines`） | 無反應 | 無反應 |
+| 未翻開且首格未點擊（`first_click == True`） | 允許（翻開首格） | 警告後無反應 |
+| 未翻開、首格已點擊、無旗無標記 | 允許 | 允許（插旗） |
 
 ### 金屬探測器不觸發遊戲結束
 

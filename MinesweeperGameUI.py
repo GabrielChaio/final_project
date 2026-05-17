@@ -76,12 +76,12 @@ class GameSettingsDialog(tk.Toplevel):
         self.radar_val = 2
 
         if is_custom:
-            tk.Label(self, text="列數 (3-30):").grid(row=2, column=0, padx=10, pady=5, sticky="e")
+            tk.Label(self, text="列數 (3-27):").grid(row=2, column=0, padx=10, pady=5, sticky="e")
             self.r_entry = tk.Entry(self)
             self.r_entry.insert(0, str(default_r))
             self.r_entry.grid(row=2, column=1, padx=10, pady=5)
 
-            tk.Label(self, text="行數 (3-30):").grid(row=3, column=0, padx=10, pady=5, sticky="e")
+            tk.Label(self, text="行數 (3-44):").grid(row=3, column=0, padx=10, pady=5, sticky="e")
             self.c_entry = tk.Entry(self)
             self.c_entry.insert(0, str(default_c))
             self.c_entry.grid(row=3, column=1, padx=10, pady=5)
@@ -120,7 +120,8 @@ class GameSettingsDialog(tk.Toplevel):
                 c = int(self.c_entry.get())
                 m = int(self.m_entry.get())
                 radar = int(self.radar_entry.get())
-                if not (3 <= r <= 30 and 3 <= c <= 30): raise ValueError("地圖大小超出範圍 (3-30)")
+                if not (3 <= r <= 27): raise ValueError("列數超出範圍 (3-27)")
+                if not (3 <= c <= 44): raise ValueError("行數超出範圍 (3-44)")
                 if not (1 <= m <= (r * c) - 9): raise ValueError(f"地雷數量必須在 1 到 {(r * c) - 9} 之間")
                 if radar < 0: raise ValueError("探測次數不能為負數")
                 self.result = (r, c, m, p_id, self.player_color, radar)
@@ -144,7 +145,8 @@ class MinesweeperUI(tk.Frame):
         self.timer_running = False
         self.is_replaying = False
         self.history = []
-        
+        self.radar_mines = set()  # 記錄探測器揭示出的地雷格座標，禁止後續點擊操作
+
         self.radar_uses_left = radar_uses 
         self.radar_type = tk.StringVar(value="none") 
             
@@ -201,9 +203,12 @@ class MinesweeperUI(tk.Frame):
                 row_btns.append(btn)
             self.buttons.append(row_btns)
 
-    # 左鍵點擊事件：依目前模式分派至探測器或一般翻格邏輯
+    # 左鍵點擊事件：已插旗或探測器標記地雷的格子無反應，否則依模式分派至探測器或翻格邏輯
     def on_click(self, r, c, from_replay=False):
         if self.is_replaying and not from_replay: return
+        if not from_replay:
+            if self.buttons[r][c].cget("text") == "🚩": return
+            if (r, c) in self.radar_mines: return
         if not from_replay: self.history.append(('click', r, c))
 
         current_mode = self.radar_type.get()
@@ -237,11 +242,16 @@ class MinesweeperUI(tk.Frame):
             self.expand(r, c)
             if not from_replay: self.check_win()
 
-    # 右鍵點擊事件：切換插旗狀態（已翻開的格子不可插旗）
+    # 右鍵點擊事件：未翻第一格則警告，探測器地雷格與已翻開的格子不可插旗
     def on_right_click(self, r, c, from_replay=False):
         if self.is_replaying and not from_replay: return
         if self.logic.revealed[r][c]: return
-        if not from_replay: self.history.append(('flag', r, c))
+        if not from_replay:
+            if self.logic.first_click:
+                messagebox.showwarning("警告", "請先點開第一格後再插旗！")
+                return
+            if (r, c) in self.radar_mines: return
+            self.history.append(('flag', r, c))
         curr = self.buttons[r][c].cget("text")
         self.buttons[r][c].config(text="🚩" if curr == "" else "", fg="red")
     
@@ -271,6 +281,7 @@ class MinesweeperUI(tk.Frame):
     def start_replay(self):
         self.is_replaying = True
         self.timer_running = False
+        self.radar_mines = set()
         self.logic.revealed = [[False for _ in range(self.logic.cols)] for _ in range(self.logic.rows)]
         for r in range(self.logic.rows):
             for c in range(self.logic.cols):
@@ -345,6 +356,7 @@ class MinesweeperUI(tk.Frame):
         if 0 <= nr < self.logic.rows and 0 <= nc < self.logic.cols:
             if self.logic.board[nr][nc] == -1:
                 self.buttons[nr][nc].config(text="💣", fg="black", bg="#f1c40f")
+                self.radar_mines.add((nr, nc))
             else:
                 self.expand(nr, nc)
                 
