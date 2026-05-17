@@ -1,3 +1,4 @@
+from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, colorchooser, ttk
 from PIL import Image, ImageTk
@@ -12,7 +13,7 @@ DIFFICULTY_PRESETS = {(8, 8, 10): "easy", (12, 12, 30): "normal", (16, 16, 60): 
 
 # ---排行榜管理---
 class LeaderboardManager:
-    FILEPATH = "leaderboard.json"
+    FILEPATH = Path(__file__).resolve().parent / "leaderboard.json"
 
     @staticmethod
     def _empty():
