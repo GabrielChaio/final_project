@@ -39,10 +39,11 @@ class LeaderboardManager:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     @staticmethod
-    def add_record(difficulty, category, player_id, time_sec):
+    def add_record(difficulty, category, player_id, player_color, time_sec):
         data = LeaderboardManager.load()
         data[difficulty][category].append({
             "player_id": player_id,
+            "player_color": player_color,
             "time": time_sec,
             "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
@@ -140,18 +141,19 @@ class MinesweeperLogic:
 
 # --- 設定視窗 ---
 class GameSettingsDialog(tk.Toplevel):
-    def __init__(self, parent, default_r=8, default_c=8, default_m=8, is_custom=False):
+    def __init__(self, parent, default_r=8, default_c=8, default_m=8, is_custom=False,
+                 default_id="Unknown", default_color="#000000"):
         super().__init__(parent)
         self.title("遊戲設定")
         self.is_custom = is_custom
         self.result = None
-        self.player_color = "#000000"
-        
+        self.player_color = default_color
+
         tk.Label(self, text="玩家 ID:").grid(row=0, column=0, padx=10, pady=5, sticky="e")
         self.id_entry = tk.Entry(self)
-        self.id_entry.insert(0, "Unknown")
+        self.id_entry.insert(0, default_id)
         self.id_entry.grid(row=0, column=1, padx=10, pady=5)
-        
+
         tk.Label(self, text="ID 顏色:").grid(row=1, column=0, padx=10, pady=5, sticky="e")
         self.color_btn = tk.Button(self, text="選擇顏色", bg=self.player_color, fg="white", command=self.pick_color)
         self.color_btn.grid(row=1, column=1, padx=10, pady=5, sticky="we")
@@ -515,11 +517,11 @@ class MinesweeperUI(tk.Frame):
         difficulty = DIFFICULTY_PRESETS.get((self.logic.rows, self.logic.cols, self.logic.mines_count))
         if difficulty is None:
             return
-        LeaderboardManager.add_record(difficulty, "normal", self.player_id, self.start_time)
+        LeaderboardManager.add_record(difficulty, "normal", self.player_id, self.player_color, self.start_time)
         if self.radar_used_count == 0:
-            LeaderboardManager.add_record(difficulty, "no_tool", self.player_id, self.start_time)
+            LeaderboardManager.add_record(difficulty, "no_tool", self.player_id, self.player_color, self.start_time)
             if self.flag_used_count == 0:
-                LeaderboardManager.add_record(difficulty, "no_tool_no_flag", self.player_id, self.start_time)
+                LeaderboardManager.add_record(difficulty, "no_tool_no_flag", self.player_id, self.player_color, self.start_time)
 
     # 執行金屬探測器效果，依模式揭示十字或九宮格範圍內的所有格子
     def use_radar(self, r, c, mode):
@@ -611,8 +613,11 @@ class LeaderboardWindow(tk.Toplevel):
             self._DIFF[self.diff_var.get()], self._CAT[self.cat_var.get()])
         self.tree.delete(*self.tree.get_children())
         for i, rec in enumerate(records, 1):
+            color = rec.get("player_color", "#000000")
+            tag = f"c{color[1:]}"
+            self.tree.tag_configure(tag, foreground=color)
             self.tree.insert("", "end", values=(
-                i, rec["player_id"], f"{rec['time']} 秒", rec["date"][:10]))
+                i, rec["player_id"], f"{rec['time']} 秒", rec["date"][:10]), tags=(tag,))
 
 # --- 主選單介面 ---
 class MainMenu(tk.Tk):
@@ -621,6 +626,8 @@ class MainMenu(tk.Tk):
         self.title("踩地雷 - 遊戲選單")
         self.geometry("600x450")
         center_window(self)
+        self.last_player_id = "Unknown"    # 本次執行記憶的最後玩家 ID
+        self.last_player_color = "#000000" # 本次執行記憶的最後玩家顏色
         pygame.mixer.init()
         try:
             self.bg_image = ImageTk.PhotoImage(Image.open("main_menu_bg.jpg").resize((600, 450)))
@@ -691,11 +698,15 @@ class MainMenu(tk.Tk):
         back_btn = tk.Button(self.canvas, text="返回主選單", font=("微軟正黑體", 10), bg="#95a5a6", fg="white", command=self.show_main_menu)
         self.canvas.create_window(520, 410, window=back_btn)
 
-    # 開啟設定對話框並依回傳結果啟動遊戲
+    # 開啟設定對話框並依回傳結果啟動遊戲；記憶本次輸入供下次開局預填
     def pre_game_setup(self, r, c, m, is_custom):
-        dialog = GameSettingsDialog(self, r, c, m, is_custom)
+        dialog = GameSettingsDialog(self, r, c, m, is_custom,
+                                    default_id=self.last_player_id,
+                                    default_color=self.last_player_color)
         if dialog.result:
             r, c, m, p_id, p_color, radar_uses = dialog.result
+            self.last_player_id = p_id
+            self.last_player_color = p_color
             self.start_game(r, c, m, p_id, p_color, radar_uses)
 
     # 停止主選單音樂，建立遊戲邏輯與介面，並將視窗重新置中
