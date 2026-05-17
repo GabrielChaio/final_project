@@ -694,15 +694,25 @@ update_timer() 每 1000ms 遞增 start_time 並重新排程自身
 
 | 音效 | 觸發條件 | 回放中是否播放 |
 |------|----------|----------------|
-| `click.mp3` | 左鍵一般翻格 | 否 |
-| `boom.mp3` | 踩到地雷 | 否 |
-| `radar.mp3` | 使用金屬探測器 | 否 |
-| `game_bgm.mp3` | 遊戲介面開啟時循環播放（`play(-1)`） | 是（已在播放） |
-| `menu_bgm.mp3` | 主選單開啟時循環播放（`play(-1)`） | — |
+| `assets/click.mp3` | 左鍵一般翻格 | 否 |
+| `assets/boom.mp3` | 踩到地雷 | 否 |
+| `assets/radar.mp3` | 使用金屬探測器 | 否 |
+| `assets/game_bgm.mp3` | 遊戲介面開啟時循環播放（`play(-1)`） | 是（已在播放） |
+| `assets/menu_bgm.mp3` | 主選單開啟時循環播放（`play(-1)`） | — |
+
+### 素材目錄
+
+所有音效與圖片素材放於 `assets/` 資料夾（與 `MinesweeperGameUI.py` 同層）。程式碼以頂層常數定義路徑：
+
+```python
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+```
+
+各素材檔案皆以 `ASSETS_DIR / "filename"` 的 `Path` 物件傳入 pygame / PIL，不依賴終端機 cwd。
 
 ### 背景圖片
 
-`main_menu_bg.jpg` 在 `MainMenu.__init__` 中載入並縮放為 600×450，以 `ImageTk.PhotoImage` 儲存於 `self.bg_image`，避免被 Python 垃圾回收機制回收。失敗時改用純色背景（`#b0d8d2`）。
+`assets/main_menu_bg.jpg` 在 `MainMenu.__init__` 中載入並縮放為 600×450，以 `ImageTk.PhotoImage` 儲存於 `self.bg_image`，避免被 Python 垃圾回收機制回收。失敗時改用純色背景（`#b0d8d2`）。
 
 ---
 

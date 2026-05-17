@@ -155,13 +155,15 @@ python MinesweeperGameUI.py
 
 ## 音效與資源檔案
 
+所有素材放於 `assets/` 資料夾（與 `MinesweeperGameUI.py` 同層）：
+
 | 檔案 | 說明 |
 |------|------|
-| `menu_bgm.mp3` | 主選單背景音樂 |
-| `game_bgm.mp3` | 遊戲進行中背景音樂 |
-| `click.mp3` | 翻格音效 |
-| `boom.mp3` | 踩雷爆炸音效 |
-| `radar.mp3` | 金屬探測器使用音效 |
-| `main_menu_bg.jpg` | 主選單背景圖片 |
+| `assets/menu_bgm.mp3` | 主選單背景音樂 |
+| `assets/game_bgm.mp3` | 遊戲進行中背景音樂 |
+| `assets/click.mp3` | 翻格音效 |
+| `assets/boom.mp3` | 踩雷爆炸音效 |
+| `assets/radar.mp3` | 金屬探測器使用音效 |
+| `assets/main_menu_bg.jpg` | 主選單背景圖片 |
 
 > 若音效或圖片檔案不存在，程式仍可正常運行（音效與背景圖片將被略過）。

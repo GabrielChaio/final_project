@@ -10,6 +10,7 @@ from datetime import datetime
 
 MAX_GENERATION_ATTEMPTS = 1000  # 地圖生成失敗保護：超過此次數則回報錯誤
 DIFFICULTY_PRESETS = {(8, 8, 10): "easy", (12, 12, 30): "normal", (16, 16, 60): "hard"}
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 # ---排行榜管理---
 class LeaderboardManager:
@@ -319,12 +320,12 @@ class MinesweeperUI(tk.Frame):
         # 初始化 pygame 音效模組並載入各音效檔，失敗時靜默略過（音效設為 None）
         pygame.mixer.init()
         try:
-            pygame.mixer.music.load("game_bgm.mp3") 
+            pygame.mixer.music.load(ASSETS_DIR / "game_bgm.mp3")
             pygame.mixer.music.set_volume(0.5)
             pygame.mixer.music.play(-1)
-            self.click_sound = pygame.mixer.Sound("click.mp3")
-            self.boom_sound = pygame.mixer.Sound("boom.mp3")
-            self.radar_sound = pygame.mixer.Sound("radar.mp3") 
+            self.click_sound = pygame.mixer.Sound(ASSETS_DIR / "click.mp3")
+            self.boom_sound = pygame.mixer.Sound(ASSETS_DIR / "boom.mp3")
+            self.radar_sound = pygame.mixer.Sound(ASSETS_DIR / "radar.mp3")
         except:
             self.click_sound = self.boom_sound = self.radar_sound = None
            
@@ -785,7 +786,7 @@ class MainMenu(tk.Tk):
         self.last_player_color = "#000000" # 本次執行記憶的最後玩家顏色
         pygame.mixer.init()
         try:
-            self.bg_image = ImageTk.PhotoImage(Image.open("main_menu_bg.jpg").resize((600, 450)))
+            self.bg_image = ImageTk.PhotoImage(Image.open(ASSETS_DIR / "main_menu_bg.jpg").resize((600, 450)))
         except:
             self.bg_image = None
         self.show_main_menu()
@@ -795,7 +796,7 @@ class MainMenu(tk.Tk):
         if hasattr(self, 'main_container'): self.main_container.destroy()
         self.geometry("600x450")
         try:
-            pygame.mixer.music.load("menu_bgm.mp3") 
+            pygame.mixer.music.load(ASSETS_DIR / "menu_bgm.mp3")
             pygame.mixer.music.set_volume(0.5)
             pygame.mixer.music.play(-1)
         except: pass
