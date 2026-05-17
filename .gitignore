@@ -28,6 +28,7 @@ specs
 # 資料庫
 *.db
 *.sqlite3
+*.json
 
 # 日誌
 *.log

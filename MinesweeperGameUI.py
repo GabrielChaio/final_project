@@ -206,10 +206,20 @@ class GameSettingsDialog(tk.Toplevel):
         except ValueError:
             pass
 
-    # 開啟系統顏色選擇器，將選取的顏色套用至按鈕與玩家色彩變數
+    @staticmethod
+    def _darken_if_bright(hex_color, threshold=0.7):
+        r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
+        lum = (0.299*r + 0.587*g + 0.114*b) / 255
+        if lum > threshold:
+            scale = threshold / lum
+            r, g, b = int(r*scale), int(g*scale), int(b*scale)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    # 開啟系統顏色選擇器；若亮度過高則自動等比調暗至可讀範圍
     def pick_color(self):
         color = colorchooser.askcolor(title="選擇玩家 ID 顏色")[1]
         if color:
+            color = self._darken_if_bright(color)
             self.player_color = color
             self.color_btn.config(bg=color)
 
