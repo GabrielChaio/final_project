@@ -2,8 +2,9 @@ import tkinter as tk
 from tkinter import messagebox, colorchooser
 from PIL import Image, ImageTk
 import random
-import pygame  
+import pygame
 
+# 將視窗置中顯示於螢幕中央
 def center_window(window):
     window.update_idletasks()  
     width = window.winfo_width()
@@ -22,16 +23,19 @@ class MinesweeperLogic:
         self.revealed = [] # 表示哪些格子已被翻開，初始為 False
         self.first_click = True 
 
+    # 在玩家第一次點擊後生成地雷與計算各格數字，確保首格安全
     def reset_board(self, start_r, start_c):
         self.board = [[0 for _ in range(self.cols)] for _ in range(self.rows)]
         self.revealed = [[False for _ in range(self.cols)] for _ in range(self.rows)]
         mines_placed = 0
+        # 禁止在起始格周圍 3×3 範圍內放置地雷，保護首次點擊安全
         forbidden = [(start_r + dr, start_c + dc) for dr in [-1,0,1] for dc in [-1,0,1]]
         while mines_placed < self.mines_count:
             r, c = random.randint(0, self.rows-1), random.randint(0, self.cols-1)
             if (r, c) not in forbidden and self.board[r][c] != -1:
                 self.board[r][c] = -1
                 mines_placed += 1
+        # 計算每個安全格周圍 8 格中的地雷數，填入 board
         for r in range(self.rows):
             for c in range(self.cols):
                 if self.board[r][c] == -1: continue
@@ -100,12 +104,14 @@ class GameSettingsDialog(tk.Toplevel):
         self.grab_set()
         parent.wait_window(self)
 
+    # 開啟系統顏色選擇器，將選取的顏色套用至按鈕與玩家色彩變數
     def pick_color(self):
         color = colorchooser.askcolor(title="選擇玩家 ID 顏色")[1]
         if color:
             self.player_color = color
             self.color_btn.config(bg=color)
 
+    # 驗證輸入值並將結果打包為 tuple 存入 self.result，通過後關閉對話框
     def on_confirm(self):
         p_id = self.id_entry.get().strip() or "Unknown"
         if self.is_custom:
@@ -114,7 +120,7 @@ class GameSettingsDialog(tk.Toplevel):
                 c = int(self.c_entry.get())
                 m = int(self.m_entry.get())
                 radar = int(self.radar_entry.get())
-                if not (3 <= r <= 30 and 3 <= c <= 30): raise ValueError("地圖大小超出範圍 (3-32)")
+                if not (3 <= r <= 30 and 3 <= c <= 30): raise ValueError("地圖大小超出範圍 (3-30)")
                 if not (1 <= m <= (r * c) - 9): raise ValueError(f"地雷數量必須在 1 到 {(r * c) - 9} 之間")
                 if radar < 0: raise ValueError("探測次數不能為負數")
                 self.result = (r, c, m, p_id, self.player_color, radar)
@@ -142,6 +148,7 @@ class MinesweeperUI(tk.Frame):
         self.radar_uses_left = radar_uses 
         self.radar_type = tk.StringVar(value="none") 
             
+        # 初始化 pygame 音效模組並載入各音效檔，失敗時靜默略過（音效設為 None）
         pygame.mixer.init()
         try:
             pygame.mixer.music.load("game_bgm.mp3") 
@@ -156,6 +163,7 @@ class MinesweeperUI(tk.Frame):
         self.create_widgets()
         self.pack(padx=20, pady=20)
 
+    # 建立頂部資訊列（計時、玩家名稱、退出）、左側探測器面板與盤面按鈕格
     def create_widgets(self):
         top_frame = tk.Frame(self)
         top_frame.grid(row=0, column=0, columnspan=self.logic.cols + 1, sticky="ew", pady=5)
@@ -178,11 +186,13 @@ class MinesweeperUI(tk.Frame):
         self.radar_count_label = tk.Label(tool_frame, text=f"剩餘: {self.radar_uses_left} 次", font=("微軟正黑體", 10))
         self.radar_count_label.pack(pady=5)
         
+        # 探測器模式選項：不使用 / 十字形（整行整列）/ 九宮格（3×3 範圍）
         tk.Radiobutton(tool_frame, text="🚫未使用", variable=self.radar_type, value="none").pack(anchor="w", padx=5)
         tk.Radiobutton(tool_frame, text="➕十字", variable=self.radar_type, value="cross").pack(anchor="w", padx=5)
         tk.Radiobutton(tool_frame, text="⬛九宮格", variable=self.radar_type, value="area").pack(anchor="w", padx=5)
         
-        for r in range(self.logic.rows):    
+        # 依列數與行數動態生成盤面按鈕，左鍵翻格、右鍵插旗
+        for r in range(self.logic.rows):
             row_btns = []
             for c in range(self.logic.cols):
                 btn = tk.Button(self, width=3, height=1, command=lambda r=r, c=c: self.on_click(r, c))
@@ -191,6 +201,7 @@ class MinesweeperUI(tk.Frame):
                 row_btns.append(btn)
             self.buttons.append(row_btns)
 
+    # 左鍵點擊事件：依目前模式分派至探測器或一般翻格邏輯
     def on_click(self, r, c, from_replay=False):
         if self.is_replaying and not from_replay: return
         if not from_replay: self.history.append(('click', r, c))
@@ -210,6 +221,7 @@ class MinesweeperUI(tk.Frame):
                 return
 
         if self.click_sound and not self.is_replaying: self.click_sound.play()
+        # 第一次點擊時初始化地雷盤面並啟動計時器
         if self.logic.first_click:
             self.logic.reset_board(r, c)
             self.logic.first_click = False
@@ -225,6 +237,7 @@ class MinesweeperUI(tk.Frame):
             self.expand(r, c)
             if not from_replay: self.check_win()
 
+    # 右鍵點擊事件：切換插旗狀態（已翻開的格子不可插旗）
     def on_right_click(self, r, c, from_replay=False):
         if self.is_replaying and not from_replay: return
         if self.logic.revealed[r][c]: return
@@ -232,6 +245,7 @@ class MinesweeperUI(tk.Frame):
         curr = self.buttons[r][c].cget("text")
         self.buttons[r][c].config(text="🚩" if curr == "" else "", fg="red")
     
+    # 顯示自訂結束對話框，提供「查看回放」與「返回主選單」兩個選項
     def show_custom_end_dialog(self, message):
         dialog = tk.Toplevel(self)
         dialog.title("遊戲結束")
@@ -245,6 +259,7 @@ class MinesweeperUI(tk.Frame):
         tk.Button(btn_frame, text="查看回放", width=12, command=lambda: [dialog.destroy(), self.start_replay()]).pack(side="left", padx=10)
         tk.Button(btn_frame, text="返回主選單", width=12, command=lambda: [dialog.destroy(), self.exit_game()]).pack(side="left", padx=10)
     
+    # 遊戲結束流程：停止計時並顯示結果對話框
     def end_game_flow(self, message):
         self.timer_running = False 
         if self.history: self.show_custom_end_dialog(message)
@@ -252,6 +267,7 @@ class MinesweeperUI(tk.Frame):
             messagebox.showinfo("遊戲結束", message)
             self.exit_game()
 
+    # 重置盤面視覺狀態並進入回放模式
     def start_replay(self):
         self.is_replaying = True
         self.timer_running = False
@@ -263,6 +279,7 @@ class MinesweeperUI(tk.Frame):
         self.timer_label.config(text="回放中...")
         self.replay_step(0)
 
+    # 逐步重播 history 中的每個操作，每步間隔 500ms
     def replay_step(self, index):
         if not self.winfo_exists(): return 
         if index < len(self.history):
@@ -285,6 +302,7 @@ class MinesweeperUI(tk.Frame):
             messagebox.showinfo("回放", "回放結束")
             self.exit_game()
 
+    # 遞迴翻開格子；值為 0 時自動向 8 個方向展開（DFS）
     def expand(self, r, c):
         if not (0 <= r < self.logic.rows and 0 <= c < self.logic.cols): return
         if self.logic.revealed[r][c]: return
@@ -298,11 +316,13 @@ class MinesweeperUI(tk.Frame):
                 for dc in [-1, 0, 1]:
                     if not (dr == 0 and dc == 0): self.expand(r + dr, c + dc)
 
+    # 勝利判定：剩餘未翻格數等於地雷數時觸發勝利流程
     def check_win(self):
         if (self.logic.rows * self.logic.cols) - self.logic.get_revealed_count() == self.logic.mines_count:
             self.timer_running = False
             self.end_game_flow(f"勝利！恭喜 {self.player_id}！\n總耗時: {self.start_time} 秒")
 
+    # 執行金屬探測器效果，依模式揭示十字或九宮格範圍內的所有格子
     def use_radar(self, r, c, mode):
         if self.radar_sound and not self.is_replaying: self.radar_sound.play()
         if not self.is_replaying:
@@ -320,6 +340,7 @@ class MinesweeperUI(tk.Frame):
         if not self.is_replaying:
             self.check_win()
 
+    # 揭示單一格子：地雷顯示黃底圖示，安全格直接翻開
     def reveal_radar_cell(self, nr, nc):
         if 0 <= nr < self.logic.rows and 0 <= nc < self.logic.cols:
             if self.logic.board[nr][nc] == -1:
@@ -328,12 +349,14 @@ class MinesweeperUI(tk.Frame):
                 self.expand(nr, nc)
                 
 
+    # 每秒遞增計時器並更新顯示標籤，timer_running 為 False 時自動停止
     def update_timer(self):
         if self.timer_running:
             self.start_time += 1
             self.timer_label.config(text=f"時間: {self.start_time} 秒")
             self.after(1000, self.update_timer)
 
+    # 停止背景音樂、銷毀遊戲介面並執行返回主選單的回呼函式
     def exit_game(self):
         pygame.mixer.music.stop()
         self.destroy()
@@ -416,12 +439,14 @@ class MainMenu(tk.Tk):
         back_btn = tk.Button(self.canvas, text="返回主選單", font=("微軟正黑體", 10), bg="#95a5a6", fg="white", command=self.show_main_menu)
         self.canvas.create_window(520, 410, window=back_btn)
 
+    # 開啟設定對話框並依回傳結果啟動遊戲
     def pre_game_setup(self, r, c, m, is_custom):
         dialog = GameSettingsDialog(self, r, c, m, is_custom)
         if dialog.result:
             r, c, m, p_id, p_color, radar_uses = dialog.result
             self.start_game(r, c, m, p_id, p_color, radar_uses)
 
+    # 停止主選單音樂，建立遊戲邏輯與介面，並將視窗重新置中
     def start_game(self, r, c, m, p_id, p_color, radar_uses):
         pygame.mixer.music.stop()
         if hasattr(self, 'main_container'): self.main_container.destroy()

@@ -1,0 +1,47 @@
+# 虛擬環境
+.venv/
+venv/
+env/
+
+# Python 快取
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# 測試與分析快取
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+
+# 工具設定
+.claude/
+.specify/
+specs
+
+# 資料庫
+*.db
+*.sqlite3
+
+# 日誌
+*.log
+
+# 存檔與回放
+data/saves/
+data/replays/
+
+# 系統檔案
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 打包產物
+dist/
+build/
+*.egg-info/
