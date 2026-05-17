@@ -3,6 +3,9 @@ from tkinter import messagebox, colorchooser
 from PIL import Image, ImageTk
 import random
 import pygame
+from collections import deque
+
+MAX_GENERATION_ATTEMPTS = 1000  # 地圖生成失敗保護：超過此次數則回報錯誤
 
 # 將視窗置中顯示於螢幕中央
 def center_window(window):
@@ -23,28 +26,62 @@ class MinesweeperLogic:
         self.revealed = [] # 表示哪些格子已被翻開，初始為 False
         self.first_click = True 
 
-    # 在玩家第一次點擊後生成地雷與計算各格數字，確保首格安全
+    # 生成後驗證架構：隨機佈雷→計算數字→驗證品質，不合法則重試，超過上限回傳 False
     def reset_board(self, start_r, start_c):
-        self.board = [[0 for _ in range(self.cols)] for _ in range(self.rows)]
         self.revealed = [[False for _ in range(self.cols)] for _ in range(self.rows)]
-        mines_placed = 0
         # 禁止在起始格周圍 3×3 範圍內放置地雷，保護首次點擊安全
-        forbidden = [(start_r + dr, start_c + dc) for dr in [-1,0,1] for dc in [-1,0,1]]
-        while mines_placed < self.mines_count:
-            r, c = random.randint(0, self.rows-1), random.randint(0, self.cols-1)
-            if (r, c) not in forbidden and self.board[r][c] != -1:
-                self.board[r][c] = -1
-                mines_placed += 1
-        # 計算每個安全格周圍 8 格中的地雷數，填入 board
-        for r in range(self.rows):
-            for c in range(self.cols):
-                if self.board[r][c] == -1: continue
-                count = 0
-                for dr in [-1,0,1]:
-                    for dc in [-1,0,1]:
-                        if 0 <= r+dr < self.rows and 0 <= c+dc < self.cols:
-                            if self.board[r+dr][c+dc] == -1: count += 1
-                self.board[r][c] = count
+        forbidden = {(start_r + dr, start_c + dc) for dr in [-1,0,1] for dc in [-1,0,1]}
+        for _ in range(MAX_GENERATION_ATTEMPTS):
+            self.board = [[0 for _ in range(self.cols)] for _ in range(self.rows)]
+            mines_placed = 0
+            while mines_placed < self.mines_count:
+                r, c = random.randint(0, self.rows-1), random.randint(0, self.cols-1)
+                if (r, c) not in forbidden and self.board[r][c] != -1:
+                    self.board[r][c] = -1
+                    mines_placed += 1
+            # 計算每個安全格周圍 8 格中的地雷數，填入 board
+            for r in range(self.rows):
+                for c in range(self.cols):
+                    if self.board[r][c] == -1: continue
+                    self.board[r][c] = sum(
+                        1 for dr in [-1,0,1] for dc in [-1,0,1]
+                        if 0 <= r+dr < self.rows and 0 <= c+dc < self.cols
+                        and self.board[r+dr][c+dc] == -1
+                    )
+            if self._is_valid_board():
+                return True
+        return False  # 超過最大嘗試次數，無法生成合法地圖
+
+    # 驗證盤面是否符合品質條件（安全區連通且無 2×2 全地雷區塊）
+    def _is_valid_board(self):
+        return self._check_connectivity() and not self._has_2x2_mine_block()
+
+    # BFS 驗證所有非地雷格是否屬於同一連通區（八方向）
+    def _check_connectivity(self):
+        safe_cells = [(r, c) for r in range(self.rows) for c in range(self.cols) if self.board[r][c] != -1]
+        if not safe_cells:
+            return False
+        visited = set()
+        queue = deque([safe_cells[0]])
+        visited.add(safe_cells[0])
+        while queue:
+            r, c = queue.popleft()
+            for dr in [-1,0,1]:
+                for dc in [-1,0,1]:
+                    nr, nc = r+dr, c+dc
+                    if 0 <= nr < self.rows and 0 <= nc < self.cols and (nr,nc) not in visited and self.board[nr][nc] != -1:
+                        visited.add((nr,nc))
+                        queue.append((nr,nc))
+        return len(visited) == len(safe_cells)
+
+    # 檢查是否存在 2×2 全地雷區塊
+    def _has_2x2_mine_block(self):
+        for r in range(self.rows - 1):
+            for c in range(self.cols - 1):
+                if (self.board[r][c] == self.board[r][c+1] ==
+                        self.board[r+1][c] == self.board[r+1][c+1] == -1):
+                    return True
+        return False
 
     # 計算目前已經翻開的格子數量，判斷勝利條件
     def get_revealed_count(self):
@@ -76,17 +113,18 @@ class GameSettingsDialog(tk.Toplevel):
         self.radar_val = 2
 
         if is_custom:
-            tk.Label(self, text="列數 (3-27):").grid(row=2, column=0, padx=10, pady=5, sticky="e")
+            tk.Label(self, text="列數 (5-27):").grid(row=2, column=0, padx=10, pady=5, sticky="e")
             self.r_entry = tk.Entry(self)
             self.r_entry.insert(0, str(default_r))
             self.r_entry.grid(row=2, column=1, padx=10, pady=5)
 
-            tk.Label(self, text="行數 (3-44):").grid(row=3, column=0, padx=10, pady=5, sticky="e")
+            tk.Label(self, text="行數 (5-44):").grid(row=3, column=0, padx=10, pady=5, sticky="e")
             self.c_entry = tk.Entry(self)
             self.c_entry.insert(0, str(default_c))
             self.c_entry.grid(row=3, column=1, padx=10, pady=5)
 
-            tk.Label(self, text="地雷數量:").grid(row=4, column=0, padx=10, pady=5, sticky="e")
+            self.mine_range_label = tk.Label(self, text="地雷數量:")
+            self.mine_range_label.grid(row=4, column=0, padx=10, pady=5, sticky="e")
             self.m_entry = tk.Entry(self)
             self.m_entry.insert(0, str(default_m))
             self.m_entry.grid(row=4, column=1, padx=10, pady=5)
@@ -95,6 +133,11 @@ class GameSettingsDialog(tk.Toplevel):
             self.radar_entry = tk.Entry(self)
             self.radar_entry.insert(0, "2")
             self.radar_entry.grid(row=5, column=1, padx=10, pady=5)
+
+            # 綁定列數與行數輸入框，即時更新地雷數量範圍標籤
+            self.r_entry.bind("<KeyRelease>", self._update_mine_range_label)
+            self.c_entry.bind("<KeyRelease>", self._update_mine_range_label)
+            self._update_mine_range_label()
         else:
             self.r_val, self.c_val, self.m_val = default_r, default_c, default_m
 
@@ -103,6 +146,17 @@ class GameSettingsDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
         parent.wait_window(self)
+
+    # 根據目前輸入的列數與行數，即時更新地雷數量可輸入範圍的顯示標籤
+    def _update_mine_range_label(self, event=None):
+        try:
+            r = int(self.r_entry.get())
+            c = int(self.c_entry.get())
+            if 5 <= r <= 27 and 5 <= c <= 44:
+                max_m = max(2, int(r * c * 0.25))
+                self.mine_range_label.config(text=f"地雷數量 (2-{max_m}):")
+        except ValueError:
+            pass
 
     # 開啟系統顏色選擇器，將選取的顏色套用至按鈕與玩家色彩變數
     def pick_color(self):
@@ -120,9 +174,10 @@ class GameSettingsDialog(tk.Toplevel):
                 c = int(self.c_entry.get())
                 m = int(self.m_entry.get())
                 radar = int(self.radar_entry.get())
-                if not (3 <= r <= 27): raise ValueError("列數超出範圍 (3-27)")
-                if not (3 <= c <= 44): raise ValueError("行數超出範圍 (3-44)")
-                if not (1 <= m <= (r * c) - 9): raise ValueError(f"地雷數量必須在 1 到 {(r * c) - 9} 之間")
+                if not (5 <= r <= 27): raise ValueError("列數超出範圍 (5-27)")
+                if not (5 <= c <= 44): raise ValueError("行數超出範圍 (5-44)")
+                max_m = max(2, int(r * c * 0.35))
+                if not (2 <= m <= max_m): raise ValueError(f"地雷數量必須在 2 到 {max_m} 之間")
                 if radar < 0: raise ValueError("探測次數不能為負數")
                 self.result = (r, c, m, p_id, self.player_color, radar)
                 self.destroy()
@@ -228,7 +283,10 @@ class MinesweeperUI(tk.Frame):
         if self.click_sound and not self.is_replaying: self.click_sound.play()
         # 第一次點擊時初始化地雷盤面並啟動計時器
         if self.logic.first_click:
-            self.logic.reset_board(r, c)
+            if not self.logic.reset_board(r, c):
+                messagebox.showerror("地圖生成失敗", "無法在目前設定下生成合法地圖，請調整地雷數量或地圖大小後重試。")
+                self.exit_game()
+                return
             self.logic.first_click = False
             self.timer_running = True
             self.update_timer()
@@ -314,19 +372,23 @@ class MinesweeperUI(tk.Frame):
             messagebox.showinfo("回放", "回放結束")
             self.exit_game()
 
-    # 遞迴翻開格子；值為 0 時自動向 8 個方向展開（DFS）
+    # BFS 翻開格子（取代遞迴 DFS），避免大型地圖超出 Python 遞迴深度限制
     def expand(self, r, c):
-        if not (0 <= r < self.logic.rows and 0 <= c < self.logic.cols): return
-        if self.logic.revealed[r][c]: return
-        self.logic.revealed[r][c] = True
-        val = self.logic.board[r][c]
         colors = {1: "blue", 2: "green", 3: "red", 4: "darkblue", 5: "darkred", 6: "cyan", 7: "black", 8: "grey"}
-        self.buttons[r][c].config(text=str(val) if val > 0 else "", relief=tk.SUNKEN, bg="#d1d1d1", 
-                                  state=tk.DISABLED, disabledforeground=colors.get(val, "black"))
-        if val == 0:
-            for dr in [-1, 0, 1]:
-                for dc in [-1, 0, 1]:
-                    if not (dr == 0 and dc == 0): self.expand(r + dr, c + dc)
+        queue = deque([(r, c)])
+        while queue:
+            r, c = queue.popleft()
+            if not (0 <= r < self.logic.rows and 0 <= c < self.logic.cols): continue
+            if self.logic.revealed[r][c]: continue
+            self.logic.revealed[r][c] = True
+            val = self.logic.board[r][c]
+            self.buttons[r][c].config(text=str(val) if val > 0 else "", relief=tk.SUNKEN, bg="#d1d1d1",
+                                      state=tk.DISABLED, disabledforeground=colors.get(val, "black"))
+            if val == 0:
+                for dr in [-1, 0, 1]:
+                    for dc in [-1, 0, 1]:
+                        if not (dr == 0 and dc == 0):
+                            queue.append((r + dr, c + dc))
 
     # 勝利判定：剩餘未翻格數等於地雷數時觸發勝利流程
     def check_win(self):
@@ -440,7 +502,7 @@ class MainMenu(tk.Tk):
         self.canvas.create_text(298, 38, text="請選擇難度", font=("微軟正黑體", 20, "bold"), fill="#191512")
         
         btn_style = {"font": ("微軟正黑體", 12, "bold"), "bg": "#8ea994", "fg": "white", "width": 8, "bd": 3, "relief": "ridge", "cursor": "hand2"}
-        difficulties = [("簡單", 8, 8, 8), ("普通", 12, 12, 15), ("困難", 16, 16, 25)]
+        difficulties = [("簡單", 8, 8, 10), ("普通", 12, 12, 30), ("困難", 16, 16, 60)]
         
         for i, (text, r, c, m) in enumerate(difficulties):
             btn = tk.Button(self.canvas, text=text, **btn_style, command=lambda r=r, c=c, m=m: self.pre_game_setup(r, c, m, False))
