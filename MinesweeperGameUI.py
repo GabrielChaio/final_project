@@ -547,8 +547,16 @@ class MinesweeperUI(tk.Frame):
                 self.buttons[r][c].config(text="", bg="SystemButtonFace", state=tk.NORMAL, relief=tk.RAISED)
         self.elapsed_time = 0.0
         self._start_ts = 0.0
-        self.timer_label.config(text="回放中...")
-        self.replay_step(0)
+        self._replay_tick(-3)
+
+    # 回放計時器：從 -3 倒數至 0 後啟動 replay_step，之後每秒遞增顯示
+    def _replay_tick(self, sec):
+        if not self.winfo_exists(): return
+        self.timer_label.config(text=f"時間: {sec} 秒")
+        if sec == 0:
+            self.replay_step(0)
+        if self.is_replaying:
+            self.after(1000, lambda s=sec: self._replay_tick(s + 1))
 
     # 逐步重播 history 中的每個操作；有時間戳時依實際間隔播放，否則退回 500ms
     def replay_step(self, index):
@@ -578,8 +586,7 @@ class MinesweeperUI(tk.Frame):
             if isinstance(record[-1], float) and index + 1 < len(self.history):
                 nxt = self.history[index + 1]
                 if isinstance(nxt[-1], float):
-                    delta_ms = int((nxt[-1] - record[-1]) * 1000)
-                    delay_ms = max(80, min(3000, delta_ms))
+                    delay_ms = max(1, int((nxt[-1] - record[-1]) * 1000))
             self.after(delay_ms, lambda i=index: self.replay_step(i + 1))
         else:
             self.is_replaying = False

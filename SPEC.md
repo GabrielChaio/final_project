@@ -369,8 +369,9 @@ class MinesweeperUI(tk.Frame)
 | `_show_end_dialog(message, result)` | 顯示遊戲結果與「是否儲存 Replay？」選項（儲存 / 不儲存） |
 | `_build_replay_data(result) → dict` | 封裝 version、meta、settings（`radar_uses = 剩餘次數 + 已用次數`）、board、history（tuple → list）為回放 dict |
 | `_save_replay_file(result, dialog)` | 呼叫 `ReplayManager.save_replay()`，成功後顯示相對路徑並呼叫 `exit_game()` |
-| `start_replay(history=None)` | 若傳入 `history` 則覆蓋 `self.history`；重置盤面視覺、`radar_mines`、`flag_count` 與 `revealed`，進入回放模式 |
-| `replay_step(index)` | 逐步重播 `history[index]`；相鄰步驟均有時間戳時依實際間隔（限 80–3000ms）播放，否則退回 500ms |
+| `start_replay(history=None)` | 若傳入 `history` 則覆蓋 `self.history`；重置盤面視覺、`radar_mines`、`flag_count` 與 `revealed`，呼叫 `_replay_tick(-3)` 開始 3 秒倒數 |
+| `_replay_tick(sec)` | 回放計時器；從 -3 倒數至 0（每秒 +1），sec=0 時啟動 `replay_step(0)`，之後每秒遞增更新標籤；`is_replaying` 為 False 時停止 |
+| `replay_step(index)` | 逐步重播 `history[index]`；相鄰步驟均有時間戳時依實際間隔（floor 1ms，無上限）播放，否則退回 500ms |
 | `exit_game()` | 停止音樂、銷毀 Frame、執行回呼函式 |
 
 #### 探測器模式行為
@@ -617,7 +618,8 @@ class MainMenu(tk.Tk)
 回放期間（`is_replaying == True`）：
 - 玩家點擊與右鍵操作無效。
 - 翻格與旗標由 `replay_step()` 主動驅動。
-- 每步延遲由相鄰步驟時間戳差值決定（限 80–3000ms）；無時間戳的舊版回放退回固定 500ms/步。
+- 回放開始前有 3 秒倒數（timer_label 顯示 `-3 秒` → `0 秒`），避免觀看者錯過開頭。
+- 每步延遲由相鄰步驟時間戳差值決定（最小 1ms，無上限）；無時間戳的舊版回放退回固定 500ms/步。
 - 點擊、爆炸、探測器等音效不重新播放。
 
 ---
