@@ -541,57 +541,231 @@ class MinesweeperUI(tk.Frame):
         self.timer_running = False
         self.radar_mines = set()
         self.flag_count = 0
-        self.logic.revealed = [[False for _ in range(self.logic.cols)] for _ in range(self.logic.rows)]
+        self.logic.revealed = [[False] * self.logic.cols for _ in range(self.logic.rows)]
         for r in range(self.logic.rows):
             for c in range(self.logic.cols):
                 self.buttons[r][c].config(text="", bg="SystemButtonFace", state=tk.NORMAL, relief=tk.RAISED)
         self.elapsed_time = 0.0
-        self._start_ts = 0.0
-        self._replay_tick(-3)
+        self._start_ts    = 0.0
 
-    # 回放計時器：從 -3 倒數至 0 後啟動 replay_step，之後每秒遞增顯示
-    def _replay_tick(self, sec):
+        self._replay_index       = 0
+        self._replay_paused      = True
+        self._replay_speed       = 1.0
+        self._replay_game_base   = 0.0
+        self._replay_wall_ref    = time.monotonic()
+        self._replay_total_dur   = self.history[-1][-1] if self.history else 1.0
+        self._replay_slider_busy = False
+        self._replay_after_id    = None
+
+        self.timer_label.config(text="時間: 0 秒")
+
+        replay_bar = tk.Frame(self)
+        replay_bar.grid(row=self.logic.rows + 1, column=0,
+                        columnspan=self.logic.cols + 1, sticky="ew", pady=(4, 0))
+        replay_bar.columnconfigure(4, weight=1)
+
+        self.btn_pause = tk.Button(replay_bar, text="繼續", width=6,
+                                   command=self._toggle_replay_pause)
+        self.btn_pause.grid(row=0, column=0, padx=(4, 2))
+
+        self._speed_var = tk.StringVar(value="1×")
+        self._speed_var.trace("w", self._on_speed_change)
+        speed_menu = tk.OptionMenu(replay_bar, self._speed_var, "0.5×", "1×", "2×", "3×")
+        speed_menu.config(width=4)
+        speed_menu.grid(row=0, column=1, padx=2)
+
+        self.btn_prev = tk.Button(replay_bar, text="上一步", command=self._replay_prev)
+        self.btn_prev.grid(row=0, column=2, padx=2)
+
+        self.btn_next = tk.Button(replay_bar, text="下一步", command=self._replay_next)
+        self.btn_next.grid(row=0, column=3, padx=2)
+
+        self.replay_slider = tk.Scale(
+            replay_bar, from_=0, to=self._replay_total_dur,
+            resolution=0.001, orient=tk.HORIZONTAL, showvalue=0,
+            command=self._on_slider_cmd
+        )
+        self.replay_slider.grid(row=0, column=4, sticky="ew", padx=(2, 4))
+        self.replay_slider.bind("<ButtonPress-1>",   self._on_slider_press)
+        self.replay_slider.bind("<ButtonRelease-1>", self._on_slider_release)
+
+        self._update_replay_buttons()
+
+    # 執行單一 history 紀錄（不更新 index 或時間戳），供 replay_step / next / seek 共用
+    def _execute_replay_record(self, record):
+        action = record[0]
+        if action == 'click':
+            r, c = record[1], record[2]
+            if self.logic.board[r][c] == -1:
+                self.buttons[r][c].config(text="💣", bg="red")
+            else:
+                self.expand(r, c)
+        elif action == 'flag':
+            r, c = record[1], record[2]
+            curr = self.buttons[r][c].cget("text")
+            if not self.logic.revealed[r][c]:
+                self.buttons[r][c].config(text="🚩" if curr == "" else "", fg="red")
+                self.flag_count += (1 if curr == "" else -1)
+                self.update_mine_count_label()
+        elif action == 'auto_reveal':
+            r, c = record[1], record[2]
+            self.on_double_click(r, c, from_replay=True)
+        elif action == 'radar':
+            r, c, mode = record[1], record[2], record[3]
+            self.use_radar(r, c, mode)
+
+    # 每 200ms 根據 wall clock × 速度插值更新 timer_label 與滑塊，暫停或回放結束時自動停止
+    def _replay_smooth_tick(self):
         if not self.winfo_exists(): return
-        self.timer_label.config(text=f"時間: {sec} 秒")
-        if sec == 0:
-            self.replay_step(0)
-        if self.is_replaying:
-            self.after(1000, lambda s=sec: self._replay_tick(s + 1))
+        if not self.is_replaying or self._replay_paused: return
+        current = self._replay_game_base + (time.monotonic() - self._replay_wall_ref) * self._replay_speed
+        current = min(current, self._replay_total_dur)
+        self.timer_label.config(text=f"時間: {int(current)} 秒")
+        self._replay_slider_busy = True
+        self.replay_slider.set(current)
+        self._replay_slider_busy = False
+        self.after(200, self._replay_smooth_tick)
 
-    # 逐步重播 history 中的每個操作；有時間戳時依實際間隔播放，否則退回 500ms
-    def replay_step(self, index):
+    # 逐步重播：以 _replay_index 驅動，依時間戳間距排程下一步
+    def replay_step(self):
         if not self.winfo_exists(): return
-        if index < len(self.history):
-            record = self.history[index]
-            action = record[0]
-            if action == 'click':
-                r, c = record[1], record[2]
-                if self.logic.board[r][c] == -1: self.buttons[r][c].config(text="💣", bg="red")
-                else: self.expand(r, c)
-            elif action == 'flag':
-                r, c = record[1], record[2]
-                curr = self.buttons[r][c].cget("text")
-                if not self.logic.revealed[r][c]:
-                    self.buttons[r][c].config(text="🚩" if curr == "" else "", fg="red")
-                    self.flag_count += (1 if curr == "" else -1)
-                    self.update_mine_count_label()
-            elif action == 'auto_reveal':
-                r, c = record[1], record[2]
-                self.on_double_click(r, c, from_replay=True)
-            elif action == 'radar':
-                r, c, mode = record[1], record[2], record[3]
-                self.use_radar(r, c, mode)
-
-            delay_ms = 500  # 無時間戳（舊格式）時的退回值
-            if isinstance(record[-1], float) and index + 1 < len(self.history):
-                nxt = self.history[index + 1]
-                if isinstance(nxt[-1], float):
-                    delay_ms = max(1, int((nxt[-1] - record[-1]) * 1000))
-            self.after(delay_ms, lambda i=index: self.replay_step(i + 1))
+        if self._replay_paused: return
+        if self._replay_index >= len(self.history):
+            self.is_replaying  = False
+            self._replay_paused = True
+            self._update_replay_buttons()
+            return
+        record = self.history[self._replay_index]
+        self._execute_replay_record(record)
+        game_t                 = record[-1]
+        self._replay_game_base = game_t
+        self._replay_wall_ref  = time.monotonic()
+        self._replay_index    += 1
+        self.timer_label.config(text=f"時間: {int(game_t)} 秒")
+        self._replay_slider_busy = True
+        self.replay_slider.set(game_t)
+        self._replay_slider_busy = False
+        if self._replay_index < len(self.history):
+            next_t   = self.history[self._replay_index][-1]
+            delta_ms = max(1, int((next_t - game_t) * 1000 / self._replay_speed))
         else:
-            self.is_replaying = False
-            messagebox.showinfo("回放", "回放結束")
+            delta_ms = 1
+        self._replay_after_id = self.after(delta_ms, self.replay_step)
+
+    # 同步 seek 至「最後執行步驟 = n」的盤面狀態，維持暫停（n=-1 代表回到初始狀態）
+    def _seek_to_index(self, n):
+        self.is_replaying = True
+        self.radar_mines  = set()
+        self.flag_count   = 0
+        self.logic.revealed = [[False] * self.logic.cols for _ in range(self.logic.rows)]
+        for r in range(self.logic.rows):
+            for c in range(self.logic.cols):
+                self.buttons[r][c].config(text="", bg="SystemButtonFace", state=tk.NORMAL, relief=tk.RAISED)
+        if n >= 0:
+            for i in range(n + 1):
+                self._execute_replay_record(self.history[i])
+        self._replay_index     = n + 1
+        game_t                 = self.history[n][-1] if n >= 0 else 0.0
+        self._replay_game_base = game_t
+        self._replay_wall_ref  = time.monotonic()
+        self.update_mine_count_label()
+        self.timer_label.config(text=f"時間: {int(game_t)} 秒")
+        self._replay_slider_busy = True
+        self.replay_slider.set(game_t)
+        self._replay_slider_busy = False
+        self._update_replay_buttons()
+
+    # 以時間（秒）為目標，二分搜尋最近步驟後 seek
+    def _seek_to_time(self, target_time):
+        if not self.history or target_time < self.history[0][-1]:
+            self._seek_to_index(-1)
+            return
+        lo, hi = 0, len(self.history) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if self.history[mid][-1] <= target_time:
+                lo = mid
+            else:
+                hi = mid - 1
+        self._seek_to_index(lo)
+
+    # 根據目前狀態更新四個控制元件的文字與啟用狀態
+    def _update_replay_buttons(self):
+        ended = self._replay_index >= len(self.history)
+        if ended:
+            self.btn_pause.config(text="返回")
+        elif self._replay_paused:
+            self.btn_pause.config(text="繼續")
+        else:
+            self.btn_pause.config(text="暫停")
+        self.btn_prev.config(
+            state=tk.NORMAL if self._replay_paused and self._replay_index > 0 else tk.DISABLED)
+        self.btn_next.config(
+            state=tk.NORMAL if self._replay_paused and not ended else tk.DISABLED)
+
+    def _toggle_replay_pause(self):
+        if self._replay_index >= len(self.history):
             self.exit_game()
+            return
+        if self._replay_paused:
+            self._replay_paused   = False
+            self._replay_wall_ref = time.monotonic()
+            self._replay_smooth_tick()
+            self.replay_step()
+        else:
+            if self._replay_after_id is not None:
+                self.after_cancel(self._replay_after_id)
+                self._replay_after_id = None
+            current = self._replay_game_base + (time.monotonic() - self._replay_wall_ref) * self._replay_speed
+            self._replay_game_base = min(current, self._replay_total_dur)
+            self._replay_paused = True
+        self._update_replay_buttons()
+
+    def _on_speed_change(self, *_):
+        speed_map = {"0.5×": 0.5, "1×": 1.0, "2×": 2.0, "3×": 3.0}
+        new_speed = speed_map.get(self._speed_var.get(), 1.0)
+        if not self._replay_paused:
+            current = self._replay_game_base + (time.monotonic() - self._replay_wall_ref) * self._replay_speed
+            self._replay_game_base = min(current, self._replay_total_dur)
+            self._replay_wall_ref  = time.monotonic()
+        self._replay_speed = new_speed
+
+    def _replay_prev(self):
+        if not self._replay_paused: return
+        self._seek_to_index(max(-1, self._replay_index - 2))
+
+    def _replay_next(self):
+        if not self._replay_paused: return
+        if self._replay_index >= len(self.history): return
+        record = self.history[self._replay_index]
+        self._execute_replay_record(record)
+        game_t                 = record[-1]
+        self._replay_game_base = game_t
+        self._replay_wall_ref  = time.monotonic()
+        self._replay_index    += 1
+        self.update_mine_count_label()
+        self.timer_label.config(text=f"時間: {int(game_t)} 秒")
+        self._replay_slider_busy = True
+        self.replay_slider.set(game_t)
+        self._replay_slider_busy = False
+        self._update_replay_buttons()
+
+    def _on_slider_press(self, event):
+        if not self._replay_paused:
+            if self._replay_after_id is not None:
+                self.after_cancel(self._replay_after_id)
+                self._replay_after_id = None
+            current = self._replay_game_base + (time.monotonic() - self._replay_wall_ref) * self._replay_speed
+            self._replay_game_base = min(current, self._replay_total_dur)
+            self._replay_paused = True
+            self._update_replay_buttons()
+
+    def _on_slider_release(self, event):
+        if self._replay_slider_busy: return
+        self._seek_to_time(self.replay_slider.get())
+
+    def _on_slider_cmd(self, value):
+        pass  # seek 僅在放開滑鼠時觸發，拖移中不更新畫面
 
     # BFS 翻開格子（取代遞迴 DFS），避免大型地圖超出 Python 遞迴深度限制
     def expand(self, r, c):

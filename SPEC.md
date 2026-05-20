@@ -337,6 +337,18 @@ class MinesweeperUI(tk.Frame)
 | `is_replaying` | bool | 是否處於回放模式 |
 | `radar_uses_left` | int | 金屬探測器剩餘次數 |
 | `radar_type` | tk.StringVar | 目前選擇的探測模式（`"none"` / `"cross"` / `"area"`） |
+| `_replay_index` | int | 下一個待執行的 history 步驟索引 |
+| `_replay_paused` | bool | 回放是否處於暫停狀態 |
+| `_replay_speed` | float | 目前回放速度倍率（0.5 / 1.0 / 2.0 / 3.0） |
+| `_replay_game_base` | float | 上次凍結時的遊戲時間（秒），作為插值計算基準 |
+| `_replay_wall_ref` | float | `_replay_game_base` 對應的 wall clock 時間點 |
+| `_replay_total_dur` | float | 回放總時長（秒），取自 `history[-1][-1]` |
+| `_replay_slider_busy` | bool | 程式內部更新滑塊時的防重入旗標，避免觸發 seek 回呼 |
+| `_replay_after_id` | str\|None | `after()` 排程 ID，暫停或 seek 時用於取消待執行的 `replay_step` |
+| `btn_pause` | tk.Button | 暫停/繼續/返回按鈕（回放結束後顯示「返回」） |
+| `btn_prev` | tk.Button | 上一步按鈕（僅暫停時啟用） |
+| `btn_next` | tk.Button | 下一步按鈕（僅暫停且未結束時啟用） |
+| `replay_slider` | tk.Scale | 時間軸滑塊（0 至 `_replay_total_dur`，解析度 0.001 秒） |
 
 #### 操作歷史格式（`history`）
 
@@ -369,9 +381,20 @@ class MinesweeperUI(tk.Frame)
 | `_show_end_dialog(message, result)` | 顯示遊戲結果與「是否儲存 Replay？」選項（儲存 / 不儲存） |
 | `_build_replay_data(result) → dict` | 封裝 version、meta、settings（`radar_uses = 剩餘次數 + 已用次數`）、board、history（tuple → list）為回放 dict |
 | `_save_replay_file(result, dialog)` | 呼叫 `ReplayManager.save_replay()`，成功後顯示相對路徑並呼叫 `exit_game()` |
-| `start_replay(history=None)` | 若傳入 `history` 則覆蓋 `self.history`；重置盤面視覺、`radar_mines`、`flag_count` 與 `revealed`，呼叫 `_replay_tick(-3)` 開始 3 秒倒數 |
-| `_replay_tick(sec)` | 回放計時器；從 -3 倒數至 0（每秒 +1），sec=0 時啟動 `replay_step(0)`，之後每秒遞增更新標籤；`is_replaying` 為 False 時停止 |
-| `replay_step(index)` | 逐步重播 `history[index]`；相鄰步驟均有時間戳時依實際間隔（floor 1ms，無上限）播放，否則退回 500ms |
+| `start_replay(history=None)` | 若傳入 `history` 則覆蓋 `self.history`；重置盤面視覺與回放狀態，在盤面下方建立控制列（暫停/繼續、倍速、上一步、下一步、時間軸滑塊），初始為暫停狀態 |
+| `_execute_replay_record(record)` | 執行單一 history 紀錄（不更新 index 或時間戳），供 `replay_step` / `_replay_next` / `_seek_to_index` 共用 |
+| `_replay_smooth_tick()` | 每 200ms 根據 wall clock × 速度插值更新 `timer_label` 與滑塊；暫停或回放結束時自動停止 |
+| `replay_step()` | 逐步重播：以 `_replay_index` 驅動，依相鄰步驟時間戳差值（floor 1ms，無上限，除以速度倍率）排程下一步 |
+| `_seek_to_index(n)` | 同步 seek 至「最後執行步驟 = n」的盤面狀態，維持暫停（n=-1 代表回到初始狀態） |
+| `_seek_to_time(target_time)` | 以目標時間（秒）為目標，二分搜尋最近步驟後呼叫 `_seek_to_index` |
+| `_update_replay_buttons()` | 根據目前狀態更新四個控制元件的文字與啟用狀態 |
+| `_toggle_replay_pause()` | 切換暫停/繼續；回放結束後按鈕文字變為「返回」，點擊時呼叫 `exit_game()` |
+| `_on_speed_change(*_)` | 速度選單回呼；切速時凍結目前遊戲時間基準（`_replay_game_base`）避免時間跳躍 |
+| `_replay_prev()` | 暫停狀態下回退一步（`_seek_to_index(max(-1, index - 2))`） |
+| `_replay_next()` | 暫停狀態下前進一步 |
+| `_on_slider_press(event)` | 滑鼠按下滑塊時自動暫停並凍結時間基準 |
+| `_on_slider_release(event)` | 滑鼠放開滑塊時呼叫 `_seek_to_time(slider.get())` |
+| `_on_slider_cmd(value)` | 刻意保留為空函式；seek 僅在放開滑鼠時觸發，拖移中不更新畫面 |
 | `exit_game()` | 停止音樂、銷毀 Frame、執行回呼函式 |
 
 #### 探測器模式行為
@@ -617,10 +640,38 @@ class MainMenu(tk.Tk)
 
 回放期間（`is_replaying == True`）：
 - 玩家點擊與右鍵操作無效。
-- 翻格與旗標由 `replay_step()` 主動驅動。
-- 回放開始前有 3 秒倒數（timer_label 顯示 `-3 秒` → `0 秒`），避免觀看者錯過開頭。
-- 每步延遲由相鄰步驟時間戳差值決定（最小 1ms，無上限）；無時間戳的舊版回放退回固定 500ms/步。
+- 翻格與旗標由 `replay_step()` 主動驅動，或透過控制列手動操作。
+- 回放開啟後直接進入**暫停狀態**，由玩家按「繼續」開始播放。
+- 每步延遲由相鄰步驟時間戳差值決定（floor 1ms，無上限），播放速度受倍率影響。
 - 點擊、爆炸、探測器等音效不重新播放。
+
+### 回放控制列
+
+`start_replay()` 在盤面下方建立一列控制 UI，包含以下五個元件：
+
+| 元件 | 說明 |
+|------|------|
+| 暫停/繼續/返回（`btn_pause`） | 切換播放狀態；回放結束後顯示「返回」，點擊呼叫 `exit_game()` |
+| 速度選單（`tk.OptionMenu`） | 切換倍率：0.5×、1×（預設）、2×、3×；切換時凍結目前時間基準，避免跳躍 |
+| 上一步（`btn_prev`） | 暫停狀態下回退一步（呼叫 `_seek_to_index(max(-1, index-2))`） |
+| 下一步（`btn_next`） | 暫停狀態下前進一步 |
+| 時間軸滑塊（`replay_slider`） | 可拖移，範圍 0 至 `_replay_total_dur`，解析度 0.001 秒；拖移中不更新畫面，放開時 seek |
+
+#### 時間插值（smooth tick）
+
+每 200ms 執行 `_replay_smooth_tick()`，以以下公式計算當前遊戲時間並更新標籤與滑塊：
+
+```
+current_game_t = _replay_game_base + (monotonic() - _replay_wall_ref) × _replay_speed
+```
+
+暫停或回放結束時此 tick 自動停止（函式開頭檢查 `_replay_paused`）。
+
+#### Seek 機制
+
+- `_seek_to_index(n)`：同步將盤面重置並逐步執行 `history[0..n]`，完成後設 `_replay_index = n+1` 並更新滑塊與標籤。
+- `_seek_to_time(t)`：對 `history` 做二分搜尋，找到最後一個時間戳 ≤ t 的步驟後呼叫 `_seek_to_index`。
+- Slider 拖移期間以 `_replay_slider_busy` 旗標防止程式內 `slider.set()` 觸發 seek 回呼。
 
 ---
 
@@ -652,7 +703,7 @@ False → 尚未翻開
 ]
 ```
 
-舊版回放（無時間戳）格式為 `('click', 3, 4)` 等，`replay_step` 以 `isinstance(record[-1], float)` 偵測並退回 500ms/步。
+`t` 為 `_elapsed()` 回傳值（float，相對於本局首次點擊的秒數，3 位小數）。儲存至 JSON 時 tuple 序列化為 list，`t` 仍為 float，讀取後以 `tuple()` 還原。
 
 ---
 
