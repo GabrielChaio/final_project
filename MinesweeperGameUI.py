@@ -7,6 +7,7 @@ import pygame
 import json
 from collections import deque
 from datetime import datetime
+import time
 
 MAX_GENERATION_ATTEMPTS = 1000  # 地圖生成失敗保護：超過此次數則回報錯誤
 DIFFICULTY_PRESETS = {(8, 8, 10): "easy", (12, 12, 30): "normal", (16, 16, 60): "hard"}
@@ -305,7 +306,8 @@ class MinesweeperUI(tk.Frame):
         self.player_color = player_color
         self.on_close_callback = on_close_callback
         self.buttons = []
-        self.start_time = 0
+        self.elapsed_time = 0.0  # 遊戲結束時的精確耗時（秒，3 位小數）
+        self._start_ts = 0.0     # monotonic 起始時間戳，首次點擊時設定
         self.timer_running = False
         self.is_replaying = False
         self.history = []
@@ -404,6 +406,7 @@ class MinesweeperUI(tk.Frame):
                 self.exit_game()
                 return
             self.logic.first_click = False
+            self._start_ts = time.monotonic()
             self.timer_running = True
             self.update_timer()
             
@@ -411,7 +414,9 @@ class MinesweeperUI(tk.Frame):
             if self.boom_sound and not self.is_replaying: self.boom_sound.play()
             self.timer_running = False
             self.buttons[r][c].config(text="💣", bg="red")
-            if not from_replay: self.end_game_flow(f"玩家: {self.player_id}\n踩到地雷了！耗時: {self.start_time} 秒")
+            if not from_replay:
+                self.elapsed_time = self._elapsed()
+                self.end_game_flow(f"玩家: {self.player_id}\n踩到地雷了！耗時: {self.elapsed_time:.3f} 秒")
         else:
             self.expand(r, c)
             if not from_replay: self.check_win()
@@ -462,7 +467,9 @@ class MinesweeperUI(tk.Frame):
                     if self.boom_sound and not self.is_replaying: self.boom_sound.play()
                     self.timer_running = False
                     self.buttons[nr][nc].config(text="💣", bg="red")
-                    if not from_replay: self.end_game_flow(f"玩家: {self.player_id}\n踩到地雷了！耗時: {self.start_time} 秒")
+                    if not from_replay:
+                        self.elapsed_time = self._elapsed()
+                        self.end_game_flow(f"玩家: {self.player_id}\n踩到地雷了！耗時: {self.elapsed_time:.3f} 秒")
                     return
                 else:
                     self.expand(nr, nc)
@@ -503,7 +510,7 @@ class MinesweeperUI(tk.Frame):
                 "player_id": self.player_id,
                 "player_color": self.player_color,
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "time_sec": self.start_time,
+                "time_sec": self.elapsed_time,
                 "result": result,
                 "difficulty": difficulty
             },
@@ -538,7 +545,8 @@ class MinesweeperUI(tk.Frame):
         for r in range(self.logic.rows):
             for c in range(self.logic.cols):
                 self.buttons[r][c].config(text="", bg="SystemButtonFace", state=tk.NORMAL, relief=tk.RAISED)
-        self.start_time = 0
+        self.elapsed_time = 0.0
+        self._start_ts = 0.0
         self.timer_label.config(text="回放中...")
         self.replay_step(0)
 
@@ -595,19 +603,20 @@ class MinesweeperUI(tk.Frame):
     def check_win(self):
         if (self.logic.rows * self.logic.cols) - self.logic.get_revealed_count() == self.logic.mines_count:
             self.timer_running = False
+            self.elapsed_time = self._elapsed()
             self._save_score()
-            self.end_game_flow(f"勝利！恭喜 {self.player_id}！\n總耗時: {self.start_time} 秒", result="win")
+            self.end_game_flow(f"勝利！恭喜 {self.player_id}！\n總耗時: {self.elapsed_time:.3f} 秒", result="win")
 
     # 依難度與挑戰限制將本局成績寫入排行榜（自訂模式不入榜）
     def _save_score(self):
         difficulty = DIFFICULTY_PRESETS.get((self.logic.rows, self.logic.cols, self.logic.mines_count))
         if difficulty is None:
             return
-        LeaderboardManager.add_record(difficulty, "normal", self.player_id, self.player_color, self.start_time)
+        LeaderboardManager.add_record(difficulty, "normal", self.player_id, self.player_color, self.elapsed_time)
         if self.radar_used_count == 0:
-            LeaderboardManager.add_record(difficulty, "no_tool", self.player_id, self.player_color, self.start_time)
+            LeaderboardManager.add_record(difficulty, "no_tool", self.player_id, self.player_color, self.elapsed_time)
             if self.flag_used_count == 0:
-                LeaderboardManager.add_record(difficulty, "no_tool_no_flag", self.player_id, self.player_color, self.start_time)
+                LeaderboardManager.add_record(difficulty, "no_tool_no_flag", self.player_id, self.player_color, self.elapsed_time)
 
     # 執行金屬探測器效果，依模式揭示十字或九宮格範圍內的所有格子
     def use_radar(self, r, c, mode):
@@ -646,11 +655,13 @@ class MinesweeperUI(tk.Frame):
         remaining = self.logic.mines_count - len(self.radar_mines) - self.flag_count
         self.mine_count_label.config(text=f"剩餘地雷: {remaining}")
 
-    # 每秒遞增計時器並更新顯示標籤，timer_running 為 False 時自動停止
+    def _elapsed(self) -> float:
+        return round(time.monotonic() - self._start_ts, 3)
+
+    # 每秒更新計時器顯示標籤（遊戲進行中顯示整數秒），timer_running 為 False 時自動停止
     def update_timer(self):
         if self.timer_running:
-            self.start_time += 1
-            self.timer_label.config(text=f"時間: {self.start_time} 秒")
+            self.timer_label.config(text=f"時間: {int(time.monotonic() - self._start_ts)} 秒")
             self.after(1000, self.update_timer)
 
     # 停止背景音樂、銷毀遊戲介面並執行返回主選單的回呼函式
@@ -703,7 +714,7 @@ class LeaderboardWindow(tk.Toplevel):
             tag = f"c{color[1:]}"
             self.tree.tag_configure(tag, foreground=color)
             self.tree.insert("", "end", values=(
-                i, rec["player_id"], f"{rec['time']} 秒", rec["date"][:10]), tags=(tag,))
+                i, rec["player_id"], f"{rec['time']:.3f} 秒", rec["date"][:10]), tags=(tag,))
 
 # --- 回放清單視窗 ---
 class ReplayListWindow(tk.Toplevel):
@@ -747,7 +758,7 @@ class ReplayListWindow(tk.Toplevel):
                 rec["player_id"],
                 self._DIFF_LABEL.get(rec["difficulty"], rec["difficulty"]),
                 self._RESULT_LABEL.get(rec["result"], rec["result"]),
-                f"{rec['time_sec']} 秒",
+                f"{rec['time_sec']:.3f} 秒",
                 rec["date"]
             ), tags=(tag,))
 

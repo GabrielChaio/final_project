@@ -331,7 +331,8 @@ class MinesweeperUI(tk.Frame)
 | `flag_count` | int | 目前已插旗格子數，用於計算剩餘地雷顯示（可為負值） |
 | `radar_used_count` | int | 本局累計使用探測器次數；0 表示符合無道具榜資格 |
 | `flag_used_count` | int | 本局曾插旗次數（取消後仍計）；0 表示符合無道具無旗子榜資格 |
-| `start_time` | int | 計時器秒數（每秒 +1） |
+| `elapsed_time` | float | 遊戲結束時的精確耗時（秒，3 位小數）；遊戲結束前為 `0.0` |
+| `_start_ts` | float | `time.monotonic()` 起始時間戳，首次點擊時設定 |
 | `timer_running` | bool | 計時器是否運行中 |
 | `is_replaying` | bool | 是否處於回放模式 |
 | `radar_uses_left` | int | 金屬探測器剩餘次數 |
@@ -360,7 +361,8 @@ class MinesweeperUI(tk.Frame)
 | `use_radar(r, c, mode)` | 執行探測器效果、更新剩餘次數與剩餘地雷標籤；累計 `radar_used_count` |
 | `reveal_radar_cell(nr, nc)` | 揭示單一格：地雷顯示黃底 💣 並加入 `radar_mines`，安全格呼叫 expand |
 | `update_mine_count_label()` | 更新剩餘地雷標籤：`mines_count - len(radar_mines) - flag_count` |
-| `update_timer()` | 每 1000ms 遞增 `start_time` 並更新標籤 |
+| `_elapsed() → float` | 回傳 `round(time.monotonic() - _start_ts, 3)`，即精確耗時（秒） |
+| `update_timer()` | 每 1000ms 讀取 monotonic 差值並以整數秒更新標籤 |
 | `end_game_flow(message, result="lose")` | 停止計時，若有歷史則呼叫 `_show_end_dialog()` 詢問是否儲存回放 |
 | `_show_end_dialog(message, result)` | 顯示遊戲結果與「是否儲存 Replay？」選項（儲存 / 不儲存） |
 | `_build_replay_data(result) → dict` | 封裝 version、meta、settings（`radar_uses = 剩餘次數 + 已用次數`）、board、history（tuple → list）為回放 dict |
@@ -677,9 +679,10 @@ MainMenu.show_main_menu()
 ### 計時器流程
 
 ```
-第一次 on_click() 設 timer_running = True，呼叫 update_timer()
-update_timer() 每 1000ms 遞增 start_time 並重新排程自身
-遊戲結束（踩雷或勝利）設 timer_running = False 停止遞增
+第一次 on_click() 記錄 _start_ts = time.monotonic()，設 timer_running = True，呼叫 update_timer()
+update_timer() 每 1000ms 以 int(monotonic() - _start_ts) 更新標籤（顯示整數秒）
+遊戲結束（踩雷或勝利）：設 timer_running = False，呼叫 _elapsed() 取精確耗時存入 elapsed_time
+elapsed_time 用於結束訊息、排行榜寫入、回放 meta，顯示格式為 {:.3f} 秒
 ```
 
 ---
@@ -724,6 +727,6 @@ ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 | 查看排名 | 已實作 | 本地 JSON 排行榜，9 個榜單，前 10 名，`LeaderboardWindow` 顯示（含 ID 顏色） |
 | 存檔 / 讀檔（遊戲中中斷） | 未實作 | 尚未支援在遊戲進行中途儲存狀態並於下次繼續 |
 | 視窗自適應 | 部分 | 遊戲畫面以 `geometry("")` 重設為自動大小，超大地圖可能超出螢幕 |
-| 計時器精度 | 整數秒 | 以 `after(1000)` 實作，不保證毫秒精度 |
+| 計時器精度 | 毫秒級 | 遊戲中顯示整數秒；結束訊息、排行榜、回放清單顯示 3 位小數（`time.monotonic()` 計時） |
 | 旗標計數 | 已實作 | 頂部「剩餘地雷」標籤即時顯示，可為負值 |
 | 遞迴展開深度 | 已修正 | `expand()` 已改為 BFS queue，不受 Python 遞迴深度限制影響 |
