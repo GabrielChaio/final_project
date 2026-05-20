@@ -382,7 +382,7 @@ class MinesweeperUI(tk.Frame):
         if not from_replay:
             if self.buttons[r][c].cget("text") == "🚩": return
             if (r, c) in self.radar_mines: return
-        if not from_replay: self.history.append(('click', r, c))
+        if not from_replay: self.history.append(('click', r, c, self._elapsed()))
 
         current_mode = self.radar_type.get()
         if current_mode != "none":
@@ -431,7 +431,7 @@ class MinesweeperUI(tk.Frame):
         if self.logic.revealed[r][c]: return  # 此時 first_click 必為 False，revealed 已初始化，可安全存取
         if not from_replay:
             if (r, c) in self.radar_mines: return
-            self.history.append(('flag', r, c))
+            self.history.append(('flag', r, c, self._elapsed()))
         curr = self.buttons[r][c].cget("text")
         self.buttons[r][c].config(text="🚩" if curr == "" else "", fg="red")
         self.flag_count += (1 if curr == "" else -1)
@@ -454,7 +454,7 @@ class MinesweeperUI(tk.Frame):
         )
         if marked != val: return
         if not from_replay:
-            self.history.append(('auto_reveal', r, c))
+            self.history.append(('auto_reveal', r, c, self._elapsed()))
         for dr in [-1, 0, 1]:
             for dc in [-1, 0, 1]:
                 if dr == 0 and dc == 0: continue
@@ -550,9 +550,9 @@ class MinesweeperUI(tk.Frame):
         self.timer_label.config(text="回放中...")
         self.replay_step(0)
 
-    # 逐步重播 history 中的每個操作，每步間隔 500ms
+    # 逐步重播 history 中的每個操作；有時間戳時依實際間隔播放，否則退回 500ms
     def replay_step(self, index):
-        if not self.winfo_exists(): return 
+        if not self.winfo_exists(): return
         if index < len(self.history):
             record = self.history[index]
             action = record[0]
@@ -573,7 +573,14 @@ class MinesweeperUI(tk.Frame):
             elif action == 'radar':
                 r, c, mode = record[1], record[2], record[3]
                 self.use_radar(r, c, mode)
-            self.after(500, lambda: self.replay_step(index + 1))
+
+            delay_ms = 500  # 無時間戳（舊格式）時的退回值
+            if isinstance(record[-1], float) and index + 1 < len(self.history):
+                nxt = self.history[index + 1]
+                if isinstance(nxt[-1], float):
+                    delta_ms = int((nxt[-1] - record[-1]) * 1000)
+                    delay_ms = max(80, min(3000, delta_ms))
+            self.after(delay_ms, lambda i=index: self.replay_step(i + 1))
         else:
             self.is_replaying = False
             messagebox.showinfo("回放", "回放結束")
@@ -622,7 +629,7 @@ class MinesweeperUI(tk.Frame):
     def use_radar(self, r, c, mode):
         if self.radar_sound and not self.is_replaying: self.radar_sound.play()
         if not self.is_replaying:
-            self.history.append(('radar', r, c, mode))
+            self.history.append(('radar', r, c, mode, self._elapsed()))
             self.radar_uses_left -= 1
             self.radar_used_count += 1
         if mode == "area":

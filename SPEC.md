@@ -341,11 +341,13 @@ class MinesweeperUI(tk.Frame)
 #### 操作歷史格式（`history`）
 
 ```python
-('click',       row, col)        # 左鍵點擊
-('flag',        row, col)        # 右鍵旗標切換
-('radar',       row, col, mode)  # 金屬探測器（mode: "cross" 或 "area"）
-('auto_reveal', row, col)        # 雙擊左鍵自動翻開周圍格
+('click',       row, col,        t)  # 左鍵點擊
+('flag',        row, col,        t)  # 右鍵旗標切換
+('radar',       row, col, mode,  t)  # 金屬探測器（mode: "cross" 或 "area"）
+('auto_reveal', row, col,        t)  # 雙擊左鍵自動翻開周圍格
 ```
+
+`t` 為 `_elapsed()` 回傳值（float，相對於本局首次點擊的秒數，3 位小數）。儲存至 JSON 時 tuple 序列化為 list，`t` 仍為 float，讀取後以 `tuple()` 還原。
 
 #### 主要方法
 
@@ -368,7 +370,7 @@ class MinesweeperUI(tk.Frame)
 | `_build_replay_data(result) → dict` | 封裝 version、meta、settings（`radar_uses = 剩餘次數 + 已用次數`）、board、history（tuple → list）為回放 dict |
 | `_save_replay_file(result, dialog)` | 呼叫 `ReplayManager.save_replay()`，成功後顯示相對路徑並呼叫 `exit_game()` |
 | `start_replay(history=None)` | 若傳入 `history` 則覆蓋 `self.history`；重置盤面視覺、`radar_mines`、`flag_count` 與 `revealed`，進入回放模式 |
-| `replay_step(index)` | 逐步重播 `history[index]`（含 `auto_reveal` 動作），每步間隔 500ms |
+| `replay_step(index)` | 逐步重播 `history[index]`；相鄰步驟均有時間戳時依實際間隔（限 80–3000ms）播放，否則退回 500ms |
 | `exit_game()` | 停止音樂、銷毀 Frame、執行回呼函式 |
 
 #### 探測器模式行為
@@ -615,6 +617,7 @@ class MainMenu(tk.Tk)
 回放期間（`is_replaying == True`）：
 - 玩家點擊與右鍵操作無效。
 - 翻格與旗標由 `replay_step()` 主動驅動。
+- 每步延遲由相鄰步驟時間戳差值決定（限 80–3000ms）；無時間戳的舊版回放退回固定 500ms/步。
 - 點擊、爆炸、探測器等音效不重新播放。
 
 ---
@@ -640,12 +643,14 @@ False → 尚未翻開
 
 ```python
 [
-    ('click', 3, 4),
-    ('flag',  1, 2),
-    ('radar', 5, 6, 'cross'),
-    ...
+    ('click',       3, 4,        1.234),   # t = 距首次點擊的秒數（3 位小數）
+    ('flag',        1, 2,        3.567),
+    ('radar',       5, 6, 'cross', 5.890),
+    ('auto_reveal', 7, 8,        7.123),
 ]
 ```
+
+舊版回放（無時間戳）格式為 `('click', 3, 4)` 等，`replay_step` 以 `isinstance(record[-1], float)` 偵測並退回 500ms/步。
 
 ---
 
