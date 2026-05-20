@@ -382,7 +382,9 @@ class MinesweeperUI(tk.Frame):
         if not from_replay:
             if self.buttons[r][c].cget("text") == "🚩": return
             if (r, c) in self.radar_mines: return
-        if not from_replay: self.history.append(('click', r, c, self._elapsed()))
+        if not from_replay:
+            t = 0.0 if self.logic.first_click else self._elapsed()
+            self.history.append(('click', r, c, t))
 
         current_mode = self.radar_type.get()
         if current_mode != "none":
@@ -548,14 +550,15 @@ class MinesweeperUI(tk.Frame):
         self.elapsed_time = 0.0
         self._start_ts    = 0.0
 
-        self._replay_index       = 0
-        self._replay_paused      = True
-        self._replay_speed       = 1.0
-        self._replay_game_base   = 0.0
-        self._replay_wall_ref    = time.monotonic()
-        self._replay_total_dur   = self.history[-1][-1] if self.history else 1.0
-        self._replay_slider_busy = False
-        self._replay_after_id    = None
+        self._replay_index        = 0
+        self._replay_paused       = True
+        self._replay_speed        = 1.0
+        self._replay_game_base    = 0.0
+        self._replay_wall_ref     = time.monotonic()
+        self._replay_total_dur    = self.history[-1][-1] if self.history else 1.0
+        self._replay_slider_busy  = False
+        self._replay_after_id     = None
+        self._slider_pending_value = None
 
         self.timer_label.config(text="時間: 0 秒")
 
@@ -751,6 +754,7 @@ class MinesweeperUI(tk.Frame):
         self._update_replay_buttons()
 
     def _on_slider_press(self, event):
+        self._slider_pending_value = None
         if not self._replay_paused:
             if self._replay_after_id is not None:
                 self.after_cancel(self._replay_after_id)
@@ -762,10 +766,15 @@ class MinesweeperUI(tk.Frame):
 
     def _on_slider_release(self, event):
         if self._replay_slider_busy: return
-        self._seek_to_time(self.replay_slider.get())
+        val = self._slider_pending_value
+        self._slider_pending_value = None
+        if val is not None:
+            self._seek_to_time(val)
 
     def _on_slider_cmd(self, value):
-        pass  # seek 僅在放開滑鼠時觸發，拖移中不更新畫面
+        # 追蹤使用者主動改變的滑塊值（程式內部 set() 時 _replay_slider_busy=True 會跳過）
+        if not self._replay_slider_busy:
+            self._slider_pending_value = float(value)
 
     # BFS 翻開格子（取代遞迴 DFS），避免大型地圖超出 Python 遞迴深度限制
     def expand(self, r, c):
