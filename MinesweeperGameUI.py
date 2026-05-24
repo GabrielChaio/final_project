@@ -13,7 +13,12 @@ import account as acc
 
 MAX_GENERATION_ATTEMPTS = 1000  # 地圖生成失敗保護：超過此次數則回報錯誤
 DIFFICULTY_PRESETS = {(8, 8, 10): "easy", (12, 12, 30): "normal", (16, 16, 60): "hard"}
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+# 打包為執行檔時資源位於 sys._MEIPASS；開發環境則與原始碼同層
+import sys as _sys
+_BASE = Path(_sys._MEIPASS) if getattr(_sys, "frozen", False) else Path(__file__).resolve().parent
+ASSETS_DIR = _BASE / "assets"
+del _sys, _BASE
 
 
 # 將視窗置中顯示於螢幕中央

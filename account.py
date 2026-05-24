@@ -3,7 +3,13 @@ import hashlib
 import secrets
 from pathlib import Path
 
-ACCOUNT_FILE = Path(__file__).resolve().parent / "account.json"
+import sys as _sys
+# 打包模式下帳號檔存在執行檔旁（可寫入）；開發模式存在原始碼旁
+if getattr(_sys, "frozen", False):
+    ACCOUNT_FILE = Path(_sys.executable).resolve().parent / "account.json"
+else:
+    ACCOUNT_FILE = Path(__file__).resolve().parent / "account.json"
+del _sys
 _CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # A-Z + 2-9，排除易混淆字元 0 O 1 I L
 
 def generate_recovery_key() -> str:
