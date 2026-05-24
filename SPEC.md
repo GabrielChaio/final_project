@@ -22,7 +22,8 @@
 6. [資料結構](#6-資料結構)
 7. [事件流程](#7-事件流程)
 8. [音效與資源管理](#8-音效與資源管理)
-9. [已知限制與預留功能](#9-已知限制與預留功能)
+9. [打包與發布](#9-打包與發布)
+10. [已知限制與預留功能](#10-已知限制與預留功能)
 
 ---
 
@@ -906,10 +907,13 @@ elapsed_time 用於結束訊息、排行榜寫入、回放 meta，顯示格式�
 
 ### 素材目錄
 
-所有音效與圖片素材放於 `assets/` 資料夾（與 `MinesweeperGameUI.py` 同層）。程式碼以頂層常數定義路徑：
+所有音效與圖片素材放於 `assets/` 資料夾（與 `MinesweeperGameUI.py` 同層）。程式碼以頂層常數定義路徑，同時相容開發環境與 PyInstaller 打包模式：
 
 ```python
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+import sys as _sys
+_BASE = Path(_sys._MEIPASS) if getattr(_sys, "frozen", False) else Path(__file__).resolve().parent
+ASSETS_DIR = _BASE / "assets"
+del _sys, _BASE
 ```
 
 各素材檔案皆以 `ASSETS_DIR / "filename"` 的 `Path` 物件傳入 pygame / PIL，不依賴終端機 cwd。
@@ -920,7 +924,67 @@ ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 ---
 
-## 9. 已知限制與預留功能
+## 9. 打包與發布
+
+### 工具
+
+使用 **PyInstaller** 將專案打包為 Windows 執行檔。
+
+```bash
+pip install pyinstaller
+```
+
+### 路徑相容性處理
+
+打包後程式在 `sys._MEIPASS` 暫存目錄下執行，需區分兩類路徑：
+
+| 資料類型 | 開發模式路徑 | 打包模式路徑 |
+|----------|-------------|-------------|
+| `assets/`（唯讀資源） | `Path(__file__).parent / "assets"` | `Path(sys._MEIPASS) / "assets"` |
+| `account.json`（使用者可寫） | `Path(__file__).parent / "account.json"` | `Path(sys.executable).parent / "account.json"` |
+
+相關修改已分別實作於 `MinesweeperGameUI.py`（`ASSETS_DIR`）與 `account.py`（`ACCOUNT_FILE`）。
+
+### 打包指令
+
+在專案根目錄執行：
+
+```bash
+pyinstaller --onedir --windowed --name "踩地雷" --add-data "assets;assets" --icon "assets/icon.ico" MinesweeperGameUI.py
+```
+
+| 參數 | 說明 |
+|------|------|
+| `--onedir` | 輸出為資料夾（啟動快、較不易被防毒誤報） |
+| `--windowed` | 不顯示 console 視窗（GUI 應用必加） |
+| `--name "踩地雷"` | 執行檔與輸出資料夾名稱 |
+| `--add-data "assets;assets"` | 將 `assets/` 捆綁至輸出目錄（Windows 用 `;`，macOS/Linux 用 `:`） |
+| `--icon "assets/icon.ico"` | 執行檔圖示 |
+
+輸出位於 `dist/踩地雷/`，結構如下：
+
+```
+dist/踩地雷/
+├── 踩地雷.exe
+├── assets/
+├── _internal/          ← PyInstaller 相依檔（必須一同發布）
+└── ...
+```
+
+### 壓縮發布
+
+將整個 `dist/踩地雷/` 資料夾（含 `_internal/`）壓縮為 zip：
+
+```bash
+# PowerShell
+Compress-Archive -Path "dist\踩地雷" -DestinationPath "踩地雷.zip"
+```
+
+> 每次重新打包前，建議先刪除舊的 `dist/` 與 `build/` 資料夾，避免快取殘留造成問題。
+
+---
+
+## 10. 已知限制與預留功能
 
 | 項目 | 狀態 | 說明 |
 |------|------|------|

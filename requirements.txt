@@ -1,3 +1,6 @@
 pillow
 pygame
 requests
+
+# 打包成執行檔
+pyinstaller
