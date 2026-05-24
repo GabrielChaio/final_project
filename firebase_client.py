@@ -103,7 +103,7 @@ def verify_login(player_id: str, recovery_key_hash: str) -> tuple[bool, str]:
 
 def upload_score(difficulty: str, player_id: str, player_color: str,
                  time_sec: float, challenge_type: str,
-                 record_id: str | None = None) -> bool:
+                 replay_data: dict | None = None) -> bool:
     entry = {
         "player_id":      player_id,
         "player_color":   player_color,
@@ -111,8 +111,8 @@ def upload_score(difficulty: str, player_id: str, player_color: str,
         "date":           datetime.now().strftime("%Y-%m-%d"),
         "challenge_type": challenge_type
     }
-    if record_id:
-        entry["record_id"] = record_id  # 供排行榜回放功能使用
+    if replay_data:
+        entry["replay"] = replay_data  # 嵌入回放，與 records/ 下的個人紀錄完全獨立
     key = _post(f"leaderboard/{difficulty}", entry)
     return key is not None
 

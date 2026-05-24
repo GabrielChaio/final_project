@@ -241,7 +241,6 @@ class MinesweeperUI(tk.Frame):
         self.flag_count = 0       # 已插旗格子數，用於計算剩餘地雷顯示
         self.radar_used_count = 0 # 累計使用探測器次數，判定無道具榜資格
         self.flag_used_count = 0  # 曾插旗次數（取消後仍計），判定無道具無旗子榜資格
-        self._saved_record_id = None  # 已上傳回放的 Firebase key，供上傳排名時重複使用
 
         self.radar_uses_left = radar_uses 
         self.radar_type = tk.StringVar(value="none") 
@@ -436,14 +435,14 @@ class MinesweeperUI(tk.Frame):
         btn_frame = tk.Frame(dialog)
         btn_frame.pack(pady=12)
 
-        tk.Button(btn_frame, text="儲存遊戲紀錄", width=13,
-                  command=lambda: self._on_save_record(result, dialog)
-                  ).pack(side="left", padx=6)
+        self._end_btn_save = tk.Button(btn_frame, text="儲存遊戲紀錄", width=13,
+                  command=lambda: self._on_save_record(result, dialog))
+        self._end_btn_save.pack(side="left", padx=6)
 
-        tk.Button(btn_frame, text="上傳排名", width=10,
+        self._end_btn_rank = tk.Button(btn_frame, text="上傳排名", width=10,
                   state=tk.NORMAL if can_rank else tk.DISABLED,
-                  command=lambda: self._on_upload_rank(difficulty, dialog)
-                  ).pack(side="left", padx=6)
+                  command=lambda: self._on_upload_rank(difficulty, dialog))
+        self._end_btn_rank.pack(side="left", padx=6)
 
         tk.Button(btn_frame, text="返回主選單", width=10,
                   command=lambda: [dialog.destroy(), self.exit_game()]
@@ -466,7 +465,8 @@ class MinesweeperUI(tk.Frame):
         data = self._build_replay_data(result)
         key = fb.upload_replay(pid, data)
         if key:
-            self._saved_record_id = key  # 記住此次上傳的 key，避免上傳排名時重複存放
+            if hasattr(self, '_end_btn_save') and self._end_btn_save.winfo_exists():
+                self._end_btn_save.config(state=tk.DISABLED)
             messagebox.showinfo("已儲存", "遊戲紀錄已上傳至雲端。", parent=dialog)
         else:
             messagebox.showerror("上傳失敗", "無法連線至伺服器，請確認網路連線。", parent=dialog)
@@ -486,17 +486,16 @@ class MinesweeperUI(tk.Frame):
     def _do_upload_rank(self, difficulty, dialog):
         pid   = self.main_app.account["player_id"]
         color = self.main_app.account.get("color", "#000000")
-        # 上傳排名前確保有對應回放（排行榜「回放」功能使用）；若已儲存則重用
-        if self._saved_record_id is None:
-            data = self._build_replay_data("win")
-            self._saved_record_id = fb.upload_replay(pid, data)
-        record_id = self._saved_record_id
-        ok = fb.upload_score(difficulty, pid, color, self.elapsed_time, "unlimited", record_id)
+        # 排行榜直接嵌入回放資料，與 records/ 下的個人紀錄完全獨立
+        replay = self._build_replay_data("win")
+        ok = fb.upload_score(difficulty, pid, color, self.elapsed_time, "unlimited", replay)
         if self.radar_used_count == 0:
-            fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item", record_id)
+            fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item", replay)
             if self.flag_used_count == 0:
-                fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item_no_flag", record_id)
+                fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item_no_flag", replay)
         if ok:
+            if hasattr(self, '_end_btn_rank') and self._end_btn_rank.winfo_exists():
+                self._end_btn_rank.config(state=tk.DISABLED)
             messagebox.showinfo("已上傳", "排名已上傳至雲端排行榜。", parent=dialog)
         else:
             messagebox.showerror("上傳失敗", "無法連線至伺服器，請確認網路連線。", parent=dialog)
@@ -910,19 +909,11 @@ class LeaderboardWindow(tk.Toplevel):
         if not sel:
             messagebox.showwarning("提示", "請先選擇一筆排名記錄。", parent=self)
             return
-        idx = self.tree.index(sel[0])
-        rec = self._records[idx]
-        pid       = rec.get("player_id", "")
-        record_id = rec.get("record_id")
-        if not record_id:
+        idx  = self.tree.index(sel[0])
+        rec  = self._records[idx]
+        data = rec.get("replay")
+        if not data or not all(k in data for k in ("version", "board", "history")):
             messagebox.showinfo("提示", "此筆排名沒有關聯的回放資料。", parent=self)
-            return
-        data = fb.get_replay_by_id(pid, record_id)
-        if data is None:
-            messagebox.showerror("載入失敗", "無法取得回放資料，請確認網路連線。", parent=self)
-            return
-        if not all(k in data for k in ("version", "board", "history")):
-            messagebox.showerror("載入失敗", "無效的回放資料格式。", parent=self)
             return
         self.destroy()
         self._parent.play_replay(data)
@@ -1222,7 +1213,7 @@ class MainMenu(tk.Tk):
         menu_options = [
             ("新遊戲",   self._on_new_game),
             ("回放記錄", self._on_replay_records),
-            ("查看排名", lambda: LeaderboardWindow(self)),
+            ("查看排名", self._on_leaderboard),
             ("退出遊戲", self.quit)
         ]
 
@@ -1311,7 +1302,16 @@ class MainMenu(tk.Tk):
         else:
             self.show_difficulty_menu()
 
+    def _on_leaderboard(self):
+        if not fb.is_online():
+            messagebox.showwarning("無法連線", "目前無法連線至伺服器，請確認網路連線後再試。")
+            return
+        LeaderboardWindow(self)
+
     def _on_replay_records(self):
+        if not fb.is_online():
+            messagebox.showwarning("無法連線", "目前無法連線至伺服器，請確認網路連線後再試。")
+            return
         if self.account is None:
             self.show_login_window(callback=lambda: ReplayListWindow(self, self.account))
         else:
