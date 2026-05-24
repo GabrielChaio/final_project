@@ -102,14 +102,17 @@ def verify_login(player_id: str, recovery_key_hash: str) -> tuple[bool, str]:
 # ── 排行榜 ────────────────────────────────────────────────────────────────────
 
 def upload_score(difficulty: str, player_id: str, player_color: str,
-                 time_sec: float, challenge_type: str) -> bool:
+                 time_sec: float, challenge_type: str,
+                 record_id: str | None = None) -> bool:
     entry = {
-        "player_id":     player_id,
-        "player_color":  player_color,
-        "time_sec":      round(time_sec, 3),
-        "date":          datetime.now().strftime("%Y-%m-%d"),
+        "player_id":      player_id,
+        "player_color":   player_color,
+        "time_sec":       round(time_sec, 3),
+        "date":           datetime.now().strftime("%Y-%m-%d"),
         "challenge_type": challenge_type
     }
+    if record_id:
+        entry["record_id"] = record_id  # 供排行榜回放功能使用
     key = _post(f"leaderboard/{difficulty}", entry)
     return key is not None
 
@@ -135,6 +138,13 @@ def get_leaderboard(difficulty: str, challenge_type: str) -> list | None:
 def upload_replay(player_id: str, replay_data: dict) -> str | None:
     """回傳新節點 key，失敗回傳 None。"""
     return _post(f"records/{player_id}", replay_data)
+
+def get_replay_by_id(player_id: str, record_id: str) -> dict | None:
+    """取得指定回放，成功回傳 dict，失敗或不存在回傳 None。"""
+    ok, data = _get_raw(f"records/{player_id}/{record_id}")
+    if ok and isinstance(data, dict):
+        return data
+    return None
 
 def get_replay_list(player_id: str) -> list | None:
     """回傳該玩家的所有回放摘要清單，網路錯誤回傳 None。"""

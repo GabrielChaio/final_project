@@ -241,6 +241,7 @@ class MinesweeperUI(tk.Frame):
         self.flag_count = 0       # 已插旗格子數，用於計算剩餘地雷顯示
         self.radar_used_count = 0 # 累計使用探測器次數，判定無道具榜資格
         self.flag_used_count = 0  # 曾插旗次數（取消後仍計），判定無道具無旗子榜資格
+        self._saved_record_id = None  # 已上傳回放的 Firebase key，供上傳排名時重複使用
 
         self.radar_uses_left = radar_uses 
         self.radar_type = tk.StringVar(value="none") 
@@ -465,6 +466,7 @@ class MinesweeperUI(tk.Frame):
         data = self._build_replay_data(result)
         key = fb.upload_replay(pid, data)
         if key:
+            self._saved_record_id = key  # 記住此次上傳的 key，避免上傳排名時重複存放
             messagebox.showinfo("已儲存", "遊戲紀錄已上傳至雲端。", parent=dialog)
         else:
             messagebox.showerror("上傳失敗", "無法連線至伺服器，請確認網路連線。", parent=dialog)
@@ -484,11 +486,16 @@ class MinesweeperUI(tk.Frame):
     def _do_upload_rank(self, difficulty, dialog):
         pid   = self.main_app.account["player_id"]
         color = self.main_app.account.get("color", "#000000")
-        ok = fb.upload_score(difficulty, pid, color, self.elapsed_time, "unlimited")
+        # 上傳排名前確保有對應回放（排行榜「回放」功能使用）；若已儲存則重用
+        if self._saved_record_id is None:
+            data = self._build_replay_data("win")
+            self._saved_record_id = fb.upload_replay(pid, data)
+        record_id = self._saved_record_id
+        ok = fb.upload_score(difficulty, pid, color, self.elapsed_time, "unlimited", record_id)
         if self.radar_used_count == 0:
-            fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item")
+            fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item", record_id)
             if self.flag_used_count == 0:
-                fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item_no_flag")
+                fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item_no_flag", record_id)
         if ok:
             messagebox.showinfo("已上傳", "排名已上傳至雲端排行榜。", parent=dialog)
         else:
@@ -847,6 +854,8 @@ class LeaderboardWindow(tk.Toplevel):
         super().__init__(parent)
         self.title("排行榜")
         self.resizable(False, False)
+        self._parent  = parent
+        self._records = []
 
         top_frame = tk.Frame(self, pady=8)
         top_frame.pack()
@@ -862,12 +871,17 @@ class LeaderboardWindow(tk.Toplevel):
                       command=lambda _: self.refresh()).pack(side="left", padx=4)
 
         self.tree = ttk.Treeview(self, columns=("rank", "player", "time", "date"),
-                                 show="headings", height=10)
+                                 show="headings", height=10, selectmode="browse")
         for col, label, w in [("rank", "排名", 50), ("player", "玩家 ID", 120),
                                ("time", "時間", 80), ("date", "日期", 120)]:
             self.tree.heading(col, text=label)
             self.tree.column(col, width=w, anchor="center")
-        self.tree.pack(padx=12, pady=(0, 12))
+        self.tree.pack(padx=12, pady=(0, 4))
+
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(pady=(0, 12))
+        tk.Button(btn_frame, text="回放", width=10, command=self.play_selected).pack(side="left", padx=6)
+        tk.Button(btn_frame, text="重新整理", width=10, command=self.refresh).pack(side="left", padx=6)
 
         self.refresh()
         center_window(self)
@@ -880,7 +894,9 @@ class LeaderboardWindow(tk.Toplevel):
         self.tree.delete(*self.tree.get_children())
         if records is None:
             messagebox.showerror("錯誤", "無法連線至伺服器，請確認網路連線。", parent=self)
+            self._records = []
             return
+        self._records = records
         for i, rec in enumerate(records, 1):
             color = rec.get("player_color", "#000000")
             tag = f"c{color[1:]}"
@@ -888,6 +904,28 @@ class LeaderboardWindow(tk.Toplevel):
             self.tree.insert("", "end", values=(
                 i, rec["player_id"], f"{rec['time_sec']:.3f} 秒", rec.get("date", "")[:10]
             ), tags=(tag,))
+
+    def play_selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("提示", "請先選擇一筆排名記錄。", parent=self)
+            return
+        idx = self.tree.index(sel[0])
+        rec = self._records[idx]
+        pid       = rec.get("player_id", "")
+        record_id = rec.get("record_id")
+        if not record_id:
+            messagebox.showinfo("提示", "此筆排名沒有關聯的回放資料。", parent=self)
+            return
+        data = fb.get_replay_by_id(pid, record_id)
+        if data is None:
+            messagebox.showerror("載入失敗", "無法取得回放資料，請確認網路連線。", parent=self)
+            return
+        if not all(k in data for k in ("version", "board", "history")):
+            messagebox.showerror("載入失敗", "無效的回放資料格式。", parent=self)
+            return
+        self.destroy()
+        self._parent.play_replay(data)
 
 # --- 回放清單視窗 ---
 class ReplayListWindow(tk.Toplevel):
@@ -903,7 +941,7 @@ class ReplayListWindow(tk.Toplevel):
 
         self.tree = ttk.Treeview(self,
             columns=("player", "diff", "result", "time", "date"),
-            show="headings", height=12)
+            show="headings", height=12, selectmode="browse")
         for col, label, w in [("player", "玩家", 120), ("diff", "難度", 60),
                                ("result", "結果", 60), ("time", "時間", 70), ("date", "日期", 110)]:
             self.tree.heading(col, text=label)
