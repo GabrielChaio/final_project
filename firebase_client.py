@@ -48,8 +48,8 @@ def _delete(path: str) -> bool:
 
 def is_online() -> bool:
     try:
-        r = requests.get(f"{FIREBASE_URL}/.json?shallow=true", timeout=3)
-        return r.status_code == 200
+        requests.get(f"{FIREBASE_URL}/.json?shallow=true", timeout=3)
+        return True  # 收到任何 HTTP 回應（含 403）代表伺服器可達
     except Exception:
         return False
 
