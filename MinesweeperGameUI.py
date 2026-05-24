@@ -1210,12 +1210,16 @@ class MainMenu(tk.Tk):
                     command=self._on_logout)
                 self._logout_btn_window = self.canvas.create_window(
                     597, 6, window=logout_btn, anchor="ne")
-                text_x = 544
+                id_x = 544
             else:
-                text_x = 597
-            self._status_item = self.canvas.create_text(
-                text_x, 14, text=pid, anchor="ne",
-                font=("微軟正黑體", 10, "bold"), fill=color)
+                id_x = 597
+            # 玩家 ID 以色塊呈現：底色為 ID 顏色，文字固定白色，確保在任意背景下可讀
+            id_label = tk.Label(
+                self.canvas, text=f" {pid} ",
+                font=("微軟正黑體", 10, "bold"), bg=color, fg="white",
+                padx=2, pady=1)
+            self._status_item = self.canvas.create_window(
+                id_x, 6, window=id_label, anchor="ne")
         else:
             self._status_item = self.canvas.create_text(
                 597, 14, text="未登入", anchor="ne",
