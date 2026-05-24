@@ -182,7 +182,7 @@ def center_window(window)
 | `_put(path, data) → bool` | PUT，回傳是否成功 |
 | `_post(path, data) → str \| None` | POST（Firebase push），回傳新節點 key 或 None |
 | `_delete(path) → bool` | DELETE，回傳是否成功 |
-| `is_online() → bool` | 以 GET `/.json?shallow=true` 快速探測連線（超時 3 秒） |
+| `is_online() → bool` | 以 GET `/.json?shallow=true` 快速探測連線（超時 3 秒）；收到任何 HTTP 回應（含 403）即視為在線，僅網路例外（逾時、DNS 錯誤）才回傳 `False` |
 
 #### 帳號操作
 
@@ -208,10 +208,13 @@ leaderboard/{difficulty}/{entry_id}/
     time_sec:       12.345
     date:           "2026-05-24"
     challenge_type: "unlimited" | "no_item" | "no_item_no_flag"
+    replay:         （完整回放 JSON，嵌入於條目中，供排行榜回放使用）
 
 records/{player_id}/{record_id}/
-    （完整回放 JSON，格式同下方 4.4 節）
+    （完整回放 JSON，格式同下方 4.4 節；由「儲存遊戲紀錄」上傳，與排行榜獨立）
 ```
+
+> **回放資料獨立原則**：排行榜條目直接嵌入 `replay` 欄位；`records/` 為玩家個人紀錄。兩者無交叉依賴，刪除個人紀錄不影響排行榜回放。
 
 #### Security Rules
 
@@ -230,10 +233,10 @@ records/{player_id}/{record_id}/
 
 | 函式 | 說明 |
 |------|------|
-| `upload_score(difficulty, player_id, player_color, time_sec, challenge_type) → bool` | POST 至 `leaderboard/{difficulty}`，上傳一筆成績條目 |
+| `upload_score(difficulty, player_id, player_color, time_sec, challenge_type, replay_data=None) → bool` | POST 至 `leaderboard/{difficulty}`；若提供 `replay_data` 則直接嵌入條目的 `replay` 欄位 |
 | `get_leaderboard(difficulty, challenge_type) → list \| None` | GET 全部條目後客戶端過濾 challenge_type，依 time_sec 排序後取前 10；網路錯誤回傳 None，空榜回傳 [] |
 
-> 一局符合資格的勝利最多上傳 3 筆（`unlimited` 必傳；無道具再傳 `no_item`；無道具無旗子再傳 `no_item_no_flag`）。
+> 一局符合資格的勝利最多上傳 3 筆（`unlimited` 必傳；無道具再傳 `no_item`；無道具無旗子再傳 `no_item_no_flag`）。每筆條目各自嵌入一份回放資料。
 
 #### 排行榜鍵值對照
 
@@ -250,6 +253,7 @@ records/{player_id}/{record_id}/
 | `upload_replay(player_id, replay_data) → str \| None` | POST 至 `records/{player_id}`，回傳新節點 key 或 None |
 | `get_replay_list(player_id) → list \| None` | GET `records/{player_id}` 後解析 meta，依日期由新到舊排序；網路錯誤回傳 None，無記錄回傳 [] |
 | `delete_replay(player_id, record_id) → bool` | DELETE `records/{player_id}/{record_id}` |
+| `get_replay_by_id(player_id, record_id) → dict \| None` | GET `records/{player_id}/{record_id}`，成功回傳 dict，失敗或不存在回傳 None |
 
 #### 回放 JSON 格式（存於 Firebase）
 
@@ -446,11 +450,11 @@ class MinesweeperUI(tk.Frame)
 | `_elapsed() → float` | 回傳 `round(time.monotonic() - _start_ts, 3)`，即精確耗時（秒） |
 | `update_timer()` | 每 1000ms 讀取 monotonic 差值並以整數秒更新標籤 |
 | `end_game_flow(message, result="lose")` | 停止計時，若有歷史則呼叫 `_show_end_dialog()` |
-| `_show_end_dialog(message, result)` | 顯示遊戲結果與三個按鈕：儲存遊戲紀錄 / 上傳排名（勝利且非自訂時啟用）/ 返回主選單 |
+| `_show_end_dialog(message, result)` | 顯示遊戲結果與三個按鈕：儲存遊戲紀錄 / 上傳排名（勝利且非自訂時啟用）/ 返回主選單；將按鈕存為 `self._end_btn_save` / `self._end_btn_rank` |
 | `_on_save_record(result, dialog)` | 檢查帳號，若未登入先開 LoginWindow，登入後呼叫 `_do_save_record` |
-| `_do_save_record(result, dialog)` | 呼叫 `fb.upload_replay()` 上傳，顯示成功或失敗訊息 |
+| `_do_save_record(result, dialog)` | 呼叫 `fb.upload_replay()` 上傳至 `records/{player_id}/`；成功後禁用 `_end_btn_save` 防止重複上傳 |
 | `_on_upload_rank(difficulty, dialog)` | 檢查帳號，若未登入先開 LoginWindow，登入後呼叫 `_do_upload_rank` |
-| `_do_upload_rank(difficulty, dialog)` | 依 `radar_used_count` / `flag_used_count` 判定入榜資格，呼叫 `fb.upload_score()` 上傳各適用類型 |
+| `_do_upload_rank(difficulty, dialog)` | 呼叫 `_build_replay_data("win")` 建立回放，依 `radar_used_count` / `flag_used_count` 判定資格，呼叫 `fb.upload_score()` 上傳（回放直接嵌入排行榜條目）；成功後禁用 `_end_btn_rank` |
 | `_build_replay_data(result) → dict` | 封裝 version、meta、settings（`radar_uses = 剩餘次數 + 已用次數`）、board、history（tuple → list）為回放 dict |
 | `start_replay(history=None)` | 若傳入 `history` 則覆蓋 `self.history`；重置盤面視覺與回放狀態，在盤面下方建立控制列（暫停/繼續、倍速、上一步、下一步、時間軸滑塊），初始為暫停狀態 |
 | `_execute_replay_record(record)` | 執行單一 history 紀錄（不更新 index 或時間戳），供 `replay_step` / `_replay_next` / `_seek_to_index` 共用 |
@@ -506,7 +510,7 @@ class MinesweeperUI(tk.Frame)
 class LeaderboardWindow(tk.Toplevel)
 ```
 
-**職責**：排行榜查詢視窗，提供難度與挑戰類型篩選並以表格顯示前 10 名成績。
+**職責**：排行榜查詢視窗，提供難度與挑戰類型篩選、前 10 名成績表格，以及回放任一排名記錄的功能。
 
 #### 建構子
 
@@ -514,7 +518,7 @@ class LeaderboardWindow(tk.Toplevel)
 def __init__(self, parent)
 ```
 
-建立視窗、兩個 `tk.OptionMenu`、`ttk.Treeview`，呼叫 `refresh()` 載入初始資料後置中顯示。
+建立視窗、兩個 `tk.OptionMenu`、`ttk.Treeview`（`selectmode="browse"`）及底部按鈕列（「回放」、「重新整理」），呼叫 `refresh()` 載入初始資料後置中顯示。
 
 #### 屬性
 
@@ -522,13 +526,16 @@ def __init__(self, parent)
 |------|------|------|
 | `diff_var` | tk.StringVar | 目前選擇的難度（`"簡單"` / `"普通"` / `"困難"`） |
 | `cat_var` | tk.StringVar | 目前選擇的挑戰類型 |
-| `tree` | ttk.Treeview | 排行榜表格（欄位：排名、玩家 ID、時間、日期） |
+| `tree` | ttk.Treeview | 排行榜表格（欄位：排名、玩家 ID、時間、日期；`selectmode="browse"`） |
+| `_records` | list[dict] | 目前載入的原始排行榜條目（含 `replay` 欄位） |
+| `_parent` | MainMenu | 父視窗參考，用於呼叫 `play_replay()` |
 
 #### 方法
 
 | 方法 | 說明 |
 |------|------|
-| `refresh()` | 呼叫 `fb.get_leaderboard(diff, cat)` 取雲端資料並刷新 Treeview；網路錯誤時顯示錯誤對話框 |
+| `refresh()` | 呼叫 `fb.get_leaderboard(diff, cat)` 取雲端資料，刷新 Treeview 並更新 `_records`；網路錯誤時顯示錯誤對話框 |
+| `play_selected()` | 取得選取項目對應的 `_records[idx]["replay"]`，驗證格式後銷毀視窗並呼叫 `_parent.play_replay(data)`；不需登入 |
 
 #### OptionMenu 觸發
 
@@ -554,7 +561,7 @@ class ReplayListWindow(tk.Toplevel)
 def __init__(self, parent, account: dict)
 ```
 
-`account` 為 `MainMenu.account`（含 `player_id`）。建立視窗、`ttk.Treeview`（欄位：玩家、難度、結果、耗時、日期）及操作按鈕，呼叫 `refresh()` 載入初始清單後置中顯示。
+`account` 為 `MainMenu.account`（含 `player_id`）。建立視窗、`ttk.Treeview`（欄位：玩家、難度、結果、耗時、日期；`selectmode="browse"`）及操作按鈕，呼叫 `refresh()` 載入初始清單後置中顯示。
 
 #### 屬性
 
@@ -660,7 +667,8 @@ class MainMenu(tk.Tk)
 | `_on_logout()` | 開啟確認登出對話框（含玩家 ID、Recovery Key 顯示、複製按鈕、確認 / 取消） |
 | `_do_logout(dlg)` | 關閉對話框、刪除 `account.json`、清空 `self.account`、呼叫 `_refresh_login_status()` |
 | `_on_new_game()` | 未登入時開啟登入視窗（callback = `show_difficulty_menu`），否則直接進入難度選擇 |
-| `_on_replay_records()` | 未登入時開啟登入視窗（callback = 開啟 ReplayListWindow），否則直接開啟 |
+| `_on_leaderboard()` | 離線時顯示警告並返回；在線時開啟 `LeaderboardWindow` |
+| `_on_replay_records()` | 離線時顯示警告並返回；在線且未登入時開啟登入視窗（callback = 開啟 ReplayListWindow）；在線已登入時直接開啟 |
 | `show_login_window(callback)` | 建立 `LoginWindow(self, on_success=callback)` |
 | `pre_game_setup(r, c, m, is_custom)` | 非自訂模式直接以帳號 ID / 顏色呼叫 `start_game()`；自訂模式開啟 `GameSettingsDialog(show_player_fields=False)` |
 | `start_game(r, c, m, p_id, p_color, radar_uses)` | 停止音樂（`_current_bgm = None`）、銷毀主選單容器、建立遊戲介面 |
