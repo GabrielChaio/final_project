@@ -7,14 +7,17 @@
 3. [架構設計](#3-架構設計)
 4. [類別與函式規格](#4-類別與函式規格)
    - [center_window](#41-center_window)
-   - [LeaderboardManager](#42-leaderboardmanager)
-   - [ReplayManager](#43-replaymanager)
+   - [account.py](#42-accountpy本機帳號模組)
+   - [firebase_client.py](#43-firebase_clientpyfirebase-rest-api-封裝模組)
    - [MinesweeperLogic](#44-minesweeperlogic)
    - [GameSettingsDialog](#45-gamesettingsdialog)
    - [MinesweeperUI](#46-minesweeperui)
    - [LeaderboardWindow](#47-leaderboardwindow)
    - [ReplayListWindow](#48-replaylistwindow)
-   - [MainMenu](#49-mainmenu)
+   - [LoginWindow](#49-loginwindow)
+   - [RegisterWindow](#410-registerwindow)
+   - [RecoveryKeyDialog](#411-recoverykeydialog)
+   - [MainMenu](#412-mainmenu)
 5. [遊戲邏輯規則](#5-遊戲邏輯規則)
 6. [資料結構](#6-資料結構)
 7. [事件流程](#7-事件流程)
@@ -32,6 +35,8 @@
 | UI 框架 | tkinter（標準函式庫） |
 | 音效引擎 | pygame.mixer |
 | 圖片處理 | Pillow（PIL） |
+| 雲端資料庫 | Firebase Realtime Database（REST API） |
+| 本機帳號 | `account.json`（玩家 ID、顏色、Recovery Key） |
 | 執行環境 | 桌面視窗應用程式（Windows 為主） |
 
 ---
@@ -41,11 +46,14 @@
 ```
 pillow    # 主選單背景圖片的載入與縮放
 pygame    # 背景音樂與音效播放
+requests  # Firebase Realtime Database REST API 呼叫
 tkinter   # 視窗、元件、對話框（Python 標準函式庫，無需安裝）
+hashlib   # SHA-256 雜湊 Recovery Key（Python 標準函式庫）
+secrets   # 密碼學安全亂數，用於產生 Recovery Key（Python 標準函式庫）
 pathlib   # 以 .py 檔所在位置為基準的跨平台路徑管理（Python 標準函式庫）
 random    # 地雷隨機佈置（Python 標準函式庫）
-json      # 排行榜與回放本地儲存（Python 標準函式庫）
-datetime  # 排行榜日期戳記與回放檔名（Python 標準函式庫）
+json      # 帳號本地儲存（Python 標準函式庫）
+datetime  # 排行榜日期戳記（Python 標準函式庫）
 collections.deque  # BFS 展開與回放歷史（Python 標準函式庫）
 ```
 
@@ -56,36 +64,48 @@ collections.deque  # BFS 展開與回放歷史（Python 標準函式庫）
 ### 分層架構
 
 ```
+Firebase Realtime Database（雲端）
+    users/{player_id}/          ← 玩家公開資訊（顏色、建立時間）
+    auth/{player_id}/           ← 驗證資料（Recovery Key SHA-256 hash）
+    leaderboard/{difficulty}/   ← 排行榜條目（含 challenge_type 欄位）
+    records/{player_id}/        ← 玩家回放 JSON
+
+account.py（本機帳號模組）
+    account.json ← player_id、color、recovery_key（明文，僅本機）
+
+firebase_client.py（REST API 封裝模組，無 UI）
+    is_online / user_exists / register_user / verify_login
+    upload_score / get_leaderboard
+    upload_replay / get_replay_list / delete_replay
+
+MinesweeperGameUI.py（主程式）
 MainMenu（tk.Tk）
-│  主視窗，負責主選單、難度選擇畫面的切換
+│  主視窗，管理帳號狀態（self.account）與畫面切換
 │
-├── GameSettingsDialog（tk.Toplevel）
-│       開始遊戲前的模態設定視窗
+├── LoginWindow（tk.Toplevel）       ← 登入視窗
+├── RegisterWindow（tk.Toplevel）    ← 註冊視窗（ID + 顏色）
+├── RecoveryKeyDialog（tk.Toplevel） ← 一次性 Recovery Key 顯示
+├── GameSettingsDialog（tk.Toplevel）← 遊戲參數設定
 │
 ├── MinesweeperUI（tk.Frame）
-│       遊戲主介面，內含：
+│       遊戲主介面，持有 main_app 參考以存取帳號
 │       ├── MinesweeperLogic  ← 純邏輯層（無 UI 元件）
 │       └── 操作歷史 history（list）← 回放資料來源
 │
 ├── LeaderboardWindow（tk.Toplevel）
-│       排行榜查詢視窗，讀取 LeaderboardManager（靜態類別）
+│       排行榜查詢視窗，呼叫 firebase_client.get_leaderboard()
 │
 └── ReplayListWindow（tk.Toplevel）
-        回放清單視窗，讀取 ReplayManager（靜態類別）
-
-LeaderboardManager（靜態工具類別，無 UI）
-    負責 leaderboard.json 的讀寫與記錄管理
-
-ReplayManager（靜態工具類別，無 UI）
-    負責 Records/ 目錄下回放 JSON 的讀寫與清單管理
+        回放清單視窗，呼叫 firebase_client.get_replay_list()
 ```
 
 ### 關係說明
 
 - `MainMenu` 是唯一的頂層視窗（`tk.Tk`），其餘介面皆嵌入其中或以子視窗呈現。
 - `MinesweeperLogic` 不持有任何 tkinter 物件，可獨立測試。
-- `MinesweeperUI` 持有 `MinesweeperLogic` 的參考，並在事件觸發時呼叫邏輯方法。
+- `MinesweeperUI` 持有 `MinesweeperLogic` 的參考，並持有 `main_app`（`MainMenu`）參考以存取帳號與開啟登入視窗。
 - 遊戲結束後，`MinesweeperUI` 呼叫 `on_close_callback`（即 `MainMenu.show_main_menu`）回到主選單。
+- 所有雲端操作皆透過 `firebase_client` 模組進行，超時設定 6 秒；`is_online()` 超時 3 秒。
 
 ---
 
@@ -109,102 +129,148 @@ def center_window(window)
 
 ---
 
-### 4.2 `LeaderboardManager`
+### 4.2 `account.py`（本機帳號模組）
 
-```python
-class LeaderboardManager  # 純靜態工具類別，無需實例化
-```
+**職責**：管理 `account.json`（本機帳號）的讀寫、Recovery Key 的產生與 SHA-256 雜湊。
 
-**職責**：管理 `leaderboard.json` 的讀取、寫入與記錄新增。
+#### 常數
 
-#### 靜態屬性
-
-| 屬性 | 說明 |
+| 常數 | 說明 |
 |------|------|
-| `FILEPATH` | `Path(__file__).resolve().parent / "leaderboard.json"`（以 .py 檔所在位置為基準） |
+| `ACCOUNT_FILE` | `Path(__file__).resolve().parent / "account.json"` |
+| `_CHARS` | Recovery Key 字元集：`A-Z + 2-9`，排除易混淆字元 `0 O 1 I L`（共 31 字元） |
 
-#### 靜態方法
+#### 函式
 
-| 方法 | 說明 |
+| 函式 | 說明 |
 |------|------|
-| `_empty()` | 回傳空排行榜 dict（3 難度 × 3 類型） |
-| `load() → dict` | 讀取 JSON；不存在時回傳空結構；損毀時顯示錯誤並回傳空結構 |
-| `save(data)` | 將 dict 寫入 JSON（`ensure_ascii=False, indent=2`） |
-| `add_record(difficulty, category, player_id, player_color, time_sec)` | 新增一筆記錄（含 ID 顏色）、排序、截取前 10 名後儲存 |
-| `get_records(difficulty, category) → list` | 回傳指定榜單的記錄列表 |
+| `generate_recovery_key() → str` | 以 `secrets.choice` 產生 4 段各 4 字元的 Recovery Key，格式 `XXXX-XXXX-XXXX-XXXX` |
+| `hash_key(key: str) → str` | strip + upper 後計算 SHA-256 hex digest |
+| `load() → dict \| None` | 讀取 `account.json`；不存在或缺少必要欄位時回傳 `None` |
+| `save(player_id, color, recovery_key) → dict` | 寫入 `account.json` 並回傳 dict |
 
-#### JSON 結構
+#### `account.json` 格式
 
 ```json
 {
-  "easy":   { "normal": [], "no_tool": [], "no_tool_no_flag": [] },
-  "normal": { "normal": [], "no_tool": [], "no_tool_no_flag": [] },
-  "hard":   { "normal": [], "no_tool": [], "no_tool_no_flag": [] }
+  "player_id": "Alice",
+  "color":    "#cc0000",
+  "recovery_key": "AB3D-EF4G-HJ5K-MN6P"
 }
 ```
 
-#### 單筆記錄格式
-
-```json
-{ "player_id": "Alex", "player_color": "#ff0000", "time": 35, "date": "2026-05-17 20:31:22" }
-```
-
-#### 榜單鍵值對照
-
-| 難度顯示 | JSON key | 挑戰類型顯示 | JSON key |
-|----------|----------|--------------|----------|
-| 簡單 | `"easy"` | 無限制 | `"normal"` |
-| 普通 | `"normal"` | 無道具 | `"no_tool"` |
-| 困難 | `"hard"` | 無道具無旗子 | `"no_tool_no_flag"` |
+> Recovery Key 明文存本機（本機為信任裝置），雲端 Firebase 只存 SHA-256 hash。
 
 ---
 
-### 4.3 `ReplayManager`
+### 4.3 `firebase_client.py`（Firebase REST API 封裝模組）
 
-```python
-class ReplayManager  # 純靜態工具類別，無需實例化
+**職責**：封裝所有 Firebase Realtime Database REST 操作，以及帳號驗證、排行榜、回放的高階業務函式。
+
+#### 常數
+
+| 常數 | 說明 |
+|------|------|
+| `FIREBASE_URL` | Firebase 資料庫根 URL |
+| `_TIMEOUT` | 一般請求超時秒數（6 秒） |
+
+#### 基礎 REST 函式
+
+| 函式 | 說明 |
+|------|------|
+| `_get_raw(path) → (bool, any)` | GET 並回傳 `(ok, data)`；網路錯誤回傳 `(False, None)` |
+| `_put(path, data) → bool` | PUT，回傳是否成功 |
+| `_post(path, data) → str \| None` | POST（Firebase push），回傳新節點 key 或 None |
+| `_delete(path) → bool` | DELETE，回傳是否成功 |
+| `is_online() → bool` | 以 GET `/.json?shallow=true` 快速探測連線（超時 3 秒） |
+
+#### 帳號操作
+
+| 函式 | 說明 |
+|------|------|
+| `user_exists(player_id) → bool \| None` | `True`=存在，`False`=不存在，`None`=網路錯誤 |
+| `register_user(player_id, color, hash) → (bool, str \| None)` | 先查重，再同時寫 `users/{pid}` 與 `auth/{pid}`；回傳 `(成功, 錯誤訊息)` |
+| `verify_login(player_id, hash) → (bool, str)` | 讀 `users/{pid}` 驗存在、讀 `auth/{pid}` 比對 hash；成功回傳 `(True, color)`，失敗回傳 `(False, 錯誤訊息)` |
+
+#### Firebase 資料結構
+
+```
+users/{player_id}/
+    color:      "#cc0000"
+    created_at: "2026-05-24T10:00:00"
+
+auth/{player_id}/
+    recovery_key_hash: "sha256hex..."
+
+leaderboard/{difficulty}/{entry_id}/
+    player_id:      "Alice"
+    player_color:   "#cc0000"
+    time_sec:       12.345
+    date:           "2026-05-24"
+    challenge_type: "unlimited" | "no_item" | "no_item_no_flag"
+
+records/{player_id}/{record_id}/
+    （完整回放 JSON，格式同下方 4.4 節）
 ```
 
-**職責**：管理 `Records/` 目錄下回放 JSON 的儲存、讀取與清單查詢。
+#### Security Rules
 
-#### 靜態屬性
+```json
+{
+  "rules": {
+    "users":       { "$pid": { ".read": true, ".write": "!data.exists()" } },
+    "auth":        { "$pid": { ".read": true, ".write": "!data.exists()" } },
+    "leaderboard": { ".read": true, ".write": true },
+    "records":     { "$pid": { ".read": true, ".write": true } }
+  }
+}
+```
 
-| 屬性 | 說明 |
+#### 排行榜操作
+
+| 函式 | 說明 |
 |------|------|
-| `RECORD_DIR` | `Path(__file__).resolve().parent / "Records"`（以 .py 檔所在位置為基準） |
+| `upload_score(difficulty, player_id, player_color, time_sec, challenge_type) → bool` | POST 至 `leaderboard/{difficulty}`，上傳一筆成績條目 |
+| `get_leaderboard(difficulty, challenge_type) → list \| None` | GET 全部條目後客戶端過濾 challenge_type，依 time_sec 排序後取前 10；網路錯誤回傳 None，空榜回傳 [] |
 
-#### 靜態方法
+> 一局符合資格的勝利最多上傳 3 筆（`unlimited` 必傳；無道具再傳 `no_item`；無道具無旗子再傳 `no_item_no_flag`）。
 
-| 方法 | 說明 |
+#### 排行榜鍵值對照
+
+| 難度顯示 | Firebase path | 挑戰類型顯示 | challenge_type |
+|----------|--------------|--------------|----------------|
+| 簡單 | `easy` | 無限制 | `unlimited` |
+| 普通 | `normal` | 無道具 | `no_item` |
+| 困難 | `hard` | 無道具無旗子 | `no_item_no_flag` |
+
+#### 回放操作
+
+| 函式 | 說明 |
 |------|------|
-| `ensure_record_dir()` | 確保 `Records/` 目錄存在（`mkdir(exist_ok=True)`） |
-| `save_replay(data) → Path` | 以 `replay_YYYYMMDD_HHMMSS.json` 命名存檔，回傳儲存路徑 |
-| `load_replay(filepath) → dict` | 讀取並驗證 JSON（需含 `version`、`board`、`history` 欄位），失敗時回傳 `None` |
-| `get_replay_list() → list[dict]` | 掃描 `Records/*.json`，解析 meta，回傳依日期由新到舊排序的清單 |
+| `upload_replay(player_id, replay_data) → str \| None` | POST 至 `records/{player_id}`，回傳新節點 key 或 None |
+| `get_replay_list(player_id) → list \| None` | GET `records/{player_id}` 後解析 meta，依日期由新到舊排序；網路錯誤回傳 None，無記錄回傳 [] |
+| `delete_replay(player_id, record_id) → bool` | DELETE `records/{player_id}/{record_id}` |
 
-#### 回放 JSON 格式
+#### 回放 JSON 格式（存於 Firebase）
 
 ```json
 {
   "version": 1,
   "meta": {
-    "player_id": "Alex",
-    "player_color": "#ff0000",
-    "result": "win",
-    "date": "2026-05-17 20:31:22"
+    "player_id":    "Alice",
+    "player_color": "#cc0000",
+    "result":       "win",
+    "date":         "2026-05-24 10:00:00",
+    "time_sec":     12.345,
+    "difficulty":   "easy"
   },
-  "settings": {
-    "rows": 8,
-    "cols": 8,
-    "mines": 10,
-    "radar_uses": 2
-  },
-  "board": [[-1, 0, ...], ...],
-  "history": [["click", 3, 4], ["flag", 1, 2], ["radar", 5, 6, "cross"], ...]
+  "settings": { "rows": 8, "cols": 8, "mines": 10, "radar_uses": 2 },
+  "board":   [[-1, 0, ...], ...],
+  "history": [["click", 3, 4, 0.0], ["flag", 1, 2, 1.234], ...]
 }
 ```
 
-> **注意**：`board` 儲存完整盤面（地雷分布），回放時直接指定 `logic.board = data["board"]` 並設 `logic.first_click = False`，不呼叫 `reset_board()`。`history` 中 tuple 序列化為 list，讀取後需轉回 `tuple`。
+> `board` 儲存完整盤面，回放時直接指定 `logic.board = data["board"]` 並設 `logic.first_click = False`，不呼叫 `reset_board()`。`history` 中 tuple 序列化為 list，讀取後以 `tuple()` 還原。
 
 ---
 
@@ -370,17 +436,19 @@ class MinesweeperUI(tk.Frame)
 | `on_right_click(r, c, from_replay)` | 右鍵旗標切換；首格未翻則警告，探測器地雷格與已翻開的格子不可插旗；更新 `flag_count` 與剩餘地雷標籤 |
 | `on_double_click(r, c, from_replay)` | 雙擊左鍵快速翻開；對已翻數字格，若周圍標記數等於格子數字則自動翻開剩餘未標記格 |
 | `expand(r, c)` | BFS 翻開格子；值為 0 時自動展開相鄰 8 格 |
-| `check_win()` | 判斷剩餘未翻格數是否等於地雷數；勝利時呼叫 `_save_score()` |
-| `_save_score()` | 依難度與使用紀錄判定可入榜的類型，逐一呼叫 `LeaderboardManager.add_record()` |
+| `check_win()` | 判斷剩餘未翻格數是否等於地雷數；勝利時呼叫 `end_game_flow(result="win")` |
 | `use_radar(r, c, mode)` | 執行探測器效果、更新剩餘次數與剩餘地雷標籤；累計 `radar_used_count` |
 | `reveal_radar_cell(nr, nc)` | 揭示單一格：地雷顯示黃底 💣 並加入 `radar_mines`，安全格呼叫 expand |
 | `update_mine_count_label()` | 更新剩餘地雷標籤：`mines_count - len(radar_mines) - flag_count` |
 | `_elapsed() → float` | 回傳 `round(time.monotonic() - _start_ts, 3)`，即精確耗時（秒） |
 | `update_timer()` | 每 1000ms 讀取 monotonic 差值並以整數秒更新標籤 |
-| `end_game_flow(message, result="lose")` | 停止計時，若有歷史則呼叫 `_show_end_dialog()` 詢問是否儲存回放 |
-| `_show_end_dialog(message, result)` | 顯示遊戲結果與「是否儲存 Replay？」選項（儲存 / 不儲存） |
+| `end_game_flow(message, result="lose")` | 停止計時，若有歷史則呼叫 `_show_end_dialog()` |
+| `_show_end_dialog(message, result)` | 顯示遊戲結果與三個按鈕：儲存遊戲紀錄 / 上傳排名（勝利且非自訂時啟用）/ 返回主選單 |
+| `_on_save_record(result, dialog)` | 檢查帳號，若未登入先開 LoginWindow，登入後呼叫 `_do_save_record` |
+| `_do_save_record(result, dialog)` | 呼叫 `fb.upload_replay()` 上傳，顯示成功或失敗訊息 |
+| `_on_upload_rank(difficulty, dialog)` | 檢查帳號，若未登入先開 LoginWindow，登入後呼叫 `_do_upload_rank` |
+| `_do_upload_rank(difficulty, dialog)` | 依 `radar_used_count` / `flag_used_count` 判定入榜資格，呼叫 `fb.upload_score()` 上傳各適用類型 |
 | `_build_replay_data(result) → dict` | 封裝 version、meta、settings（`radar_uses = 剩餘次數 + 已用次數`）、board、history（tuple → list）為回放 dict |
-| `_save_replay_file(result, dialog)` | 呼叫 `ReplayManager.save_replay()`，成功後顯示相對路徑並呼叫 `exit_game()` |
 | `start_replay(history=None)` | 若傳入 `history` 則覆蓋 `self.history`；重置盤面視覺與回放狀態，在盤面下方建立控制列（暫停/繼續、倍速、上一步、下一步、時間軸滑塊），初始為暫停狀態 |
 | `_execute_replay_record(record)` | 執行單一 history 紀錄（不更新 index 或時間戳），供 `replay_step` / `_replay_next` / `_seek_to_index` 共用 |
 | `_replay_smooth_tick()` | 每 200ms 根據 wall clock × 速度插值更新 `timer_label` 與滑塊；暫停或回放結束時自動停止 |
@@ -457,7 +525,7 @@ def __init__(self, parent)
 
 | 方法 | 說明 |
 |------|------|
-| `refresh()` | 依目前 OptionMenu 值向 `LeaderboardManager.get_records()` 取資料並刷新 Treeview |
+| `refresh()` | 呼叫 `fb.get_leaderboard(diff, cat)` 取雲端資料並刷新 Treeview；網路錯誤時顯示錯誤對話框 |
 
 #### OptionMenu 觸發
 
@@ -475,30 +543,30 @@ def __init__(self, parent)
 class ReplayListWindow(tk.Toplevel)
 ```
 
-**職責**：顯示 `Records/` 目錄下的回放清單，提供播放、刪除、重新整理功能。
+**職責**：顯示登入玩家的雲端回放清單，提供播放、刪除、重新整理功能。
 
 #### 建構子
 
 ```python
-def __init__(self, parent)  # parent 為 MainMenu 實例
+def __init__(self, parent, account: dict)
 ```
 
-建立視窗、`ttk.Treeview`（欄位：玩家、難度、結果、耗時、日期）及操作按鈕，呼叫 `refresh()` 載入初始清單後置中顯示。
+`account` 為 `MainMenu.account`（含 `player_id`）。建立視窗、`ttk.Treeview`（欄位：玩家、難度、結果、耗時、日期）及操作按鈕，呼叫 `refresh()` 載入初始清單後置中顯示。
 
 #### 屬性
 
 | 屬性 | 型別 | 說明 |
 |------|------|------|
 | `tree` | ttk.Treeview | 回放清單表格 |
-| `file_map` | dict | Treeview item id → 回放檔案路徑的映射 |
+| `_records` | list[dict] | 目前載入的回放摘要清單（含 `record_id`、`full_data` 等欄位） |
 
 #### 方法
 
 | 方法 | 說明 |
 |------|------|
-| `refresh()` | 呼叫 `ReplayManager.get_replay_list()` 重新載入清單；依 `_DIFF_LABEL` / `_RESULT_LABEL` 轉換顯示文字；玩家 ID 以其顏色著色 |
-| `play_selected()` | 取得選取項目對應的檔案路徑，呼叫 `ReplayManager.load_replay()`，再呼叫 `parent.play_replay(data)` |
-| `delete_selected()` | 確認後刪除對應 JSON 檔案並呼叫 `refresh()` |
+| `refresh()` | 呼叫 `fb.get_replay_list(player_id)` 重新載入；網路錯誤時顯示錯誤對話框；玩家 ID 以其顏色著色 |
+| `play_selected()` | 取得選取項目的 `full_data`，驗證格式後呼叫 `_parent.play_replay(data)` |
+| `delete_selected()` | 確認後呼叫 `fb.delete_replay()` 刪除並重新整理 |
 
 #### 顯示文字對照
 
@@ -509,30 +577,87 @@ _RESULT_LABEL = {"win": "勝利", "lose": "失敗"}
 
 ---
 
-### 4.9 `MainMenu`
+### 4.9 `LoginWindow`
+
+```python
+class LoginWindow(tk.Toplevel)
+```
+
+**職責**：玩家登入視窗。
+
+#### 建構子
+
+```python
+def __init__(self, main_app: MainMenu, on_success=None)
+```
+
+顯示玩家 ID 輸入框、Recovery Key 輸入框、「登入」/「取消」按鈕，以及「點此註冊」連結。
+
+#### 行為
+
+- 點擊「登入」：呼叫 `fb.verify_login()`，成功後 `acc.save()` + 更新 `main_app.account` + 呼叫 `on_success` 回呼
+- 點擊「點此註冊」：銷毀自身並開啟 `RegisterWindow`（傳遞 `on_success`）
+
+---
+
+### 4.10 `RegisterWindow`
+
+```python
+class RegisterWindow(tk.Toplevel)
+```
+
+**職責**：帳號註冊視窗（僅含玩家 ID 與顏色欄位）。
+
+#### 行為
+
+1. 點擊「註冊」：呼叫 `acc.generate_recovery_key()` 產生金鑰，再呼叫 `fb.register_user()`
+2. 成功後呼叫 `acc.save()` + 更新 `main_app.account`，銷毀自身並開啟 `RecoveryKeyDialog`
+
+---
+
+### 4.11 `RecoveryKeyDialog`
+
+```python
+class RecoveryKeyDialog(tk.Toplevel)
+```
+
+**職責**：一次性顯示 Recovery Key，提供複製到剪貼簿按鈕與確認關閉按鈕。
+
+關閉後呼叫 `on_close` 回呼（即原始操作的後續流程，如開啟難度選單）。
+
+---
+
+### 4.12 `MainMenu`
 
 ```python
 class MainMenu(tk.Tk)
 ```
 
-**職責**：頂層視窗，管理主選單與難度選擇畫面的切換，以及遊戲的啟動。
+**職責**：頂層視窗，管理帳號狀態、主選單與難度選擇畫面的切換，以及遊戲的啟動。
 
 #### 屬性
 
 | 屬性 | 型別 | 說明 |
 |------|------|------|
-| `last_player_id` | str | 本次執行中上一局填寫的玩家 ID（預設 `"Unknown"`） |
-| `last_player_color` | str | 本次執行中上一局填寫的 ID 顏色（預設 `"#000000"`） |
+| `account` | dict \| None | 本機帳號（含 `player_id`、`color`、`recovery_key`）；未登入為 `None` |
+| `last_player_id` | str | 本次執行中上一局的玩家 ID（從 account 同步） |
+| `last_player_color` | str | 本次執行中上一局的 ID 顏色（從 account 同步） |
+| `_status_item` | int \| None | Canvas 登入狀態文字的 item ID |
 
 #### 方法
 
 | 方法 | 說明 |
 |------|------|
-| `show_main_menu()` | 顯示主選單（含背景圖、四個選單按鈕；「載入遊戲」已更名為「回放記錄」） |
+| `show_main_menu()` | 顯示主選單（含背景圖、四個選單按鈕、右上角登入狀態） |
+| `_draw_login_status()` | 在 Canvas 右上角繪製「未登入」（灰色）或玩家 ID（帳號顏色） |
+| `_refresh_login_status()` | 更新 `last_player_id`/`last_player_color`，並重繪 Canvas 登入狀態文字 |
+| `_on_new_game()` | 未登入時開啟登入視窗（callback = `show_difficulty_menu`），否則直接進入難度選擇 |
+| `_on_replay_records()` | 未登入時開啟登入視窗（callback = 開啟 ReplayListWindow），否則直接開啟 |
+| `show_login_window(callback)` | 建立 `LoginWindow(self, on_success=callback)` |
 | `show_difficulty_menu()` | 顯示難度選擇（簡單 / 普通 / 困難 / 自訂 + 返回） |
-| `pre_game_setup(r, c, m, is_custom)` | 開啟 `GameSettingsDialog`（傳入 `default_id` / `default_color`），取得結果後更新 `last_player_id` / `last_player_color` 並啟動遊戲 |
+| `pre_game_setup(r, c, m, is_custom)` | 開啟 `GameSettingsDialog`（傳入 `default_id` / `default_color`），取得結果後更新 last 值並啟動遊戲 |
 | `start_game(r, c, m, p_id, p_color, radar_uses)` | 停止音樂、銷毀主選單容器、建立遊戲介面 |
-| `play_replay(data)` | 從回放 dict 建立 `MinesweeperLogic`（直接指定 `board`，不呼叫 `reset_board()`）、建立 `MinesweeperUI` 並呼叫 `start_replay(history=...)` |
+| `play_replay(data)` | 從回放 dict 建立 `MinesweeperLogic`（直接指定 `board`）、建立 `MinesweeperUI` 並呼叫 `start_replay(history=...)` |
 
 #### 畫面切換機制
 
@@ -781,8 +906,12 @@ ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 | 項目 | 狀態 | 說明 |
 |------|------|------|
-| 回放記錄 | 已實作 | 遊戲結束後可儲存回放至 `Records/`，主選單「回放記錄」可瀏覽、播放、刪除 |
-| 查看排名 | 已實作 | 本地 JSON 排行榜，9 個榜單，前 10 名，`LeaderboardWindow` 顯示（含 ID 顏色） |
+| 帳號系統 | 已實作 | 玩家 ID 全域唯一，Recovery Key 跨裝置登入；帳號資訊存 Firebase |
+| 回放記錄 | 已實作（雲端） | 遊戲結束後可上傳回放至 Firebase，需登入；回放清單為該玩家的雲端記錄 |
+| 查看排名 | 已實作（雲端） | Firebase 排行榜，3 難度 × 3 挑戰類型，前 10 名，`LeaderboardWindow` 顯示（含 ID 顏色） |
+| 離線遊玩 | 已實作 | 可在無網路狀態下遊玩，但遊戲結束後無法儲存或上傳 |
+| Recovery Key 找回 | 未實作 | 遺失 Recovery Key 後無法取回帳號；唯一方式為重新註冊新 ID |
+| 帳號顏色修改 | 未實作 | 目前顏色在註冊時確定，尚無線上修改功能 |
 | 存檔 / 讀檔（遊戲中中斷） | 未實作 | 尚未支援在遊戲進行中途儲存狀態並於下次繼續 |
 | 視窗自適應 | 部分 | 遊戲畫面以 `geometry("")` 重設為自動大小，超大地圖可能超出螢幕 |
 | 計時器精度 | 毫秒級 | 遊戲中顯示整數秒；結束訊息、排行榜、回放清單顯示 3 位小數（`time.monotonic()` 計時） |

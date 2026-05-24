@@ -8,101 +8,13 @@ import json
 from collections import deque
 from datetime import datetime
 import time
+import firebase_client as fb
+import account as acc
 
 MAX_GENERATION_ATTEMPTS = 1000  # 地圖生成失敗保護：超過此次數則回報錯誤
 DIFFICULTY_PRESETS = {(8, 8, 10): "easy", (12, 12, 30): "normal", (16, 16, 60): "hard"}
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
-# ---排行榜管理---
-class LeaderboardManager:
-    FILEPATH = Path(__file__).resolve().parent / "leaderboard.json"
-
-    @staticmethod
-    def _empty():
-        return {
-            "easy":   {"normal": [], "no_tool": [], "no_tool_no_flag": []},
-            "normal": {"normal": [], "no_tool": [], "no_tool_no_flag": []},
-            "hard":   {"normal": [], "no_tool": [], "no_tool_no_flag": []}
-        }
-
-    @staticmethod
-    def load():
-        try:
-            with open(LeaderboardManager.FILEPATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            return LeaderboardManager._empty()
-        except Exception:
-            messagebox.showerror("排行榜錯誤", "leaderboard.json 損毀，已重建空排行榜。")
-            return LeaderboardManager._empty()
-
-    @staticmethod
-    def save(data):
-        with open(LeaderboardManager.FILEPATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-    @staticmethod
-    def add_record(difficulty, category, player_id, player_color, time_sec):
-        data = LeaderboardManager.load()
-        data[difficulty][category].append({
-            "player_id": player_id,
-            "player_color": player_color,
-            "time": time_sec,
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
-        data[difficulty][category].sort(key=lambda x: x["time"])
-        data[difficulty][category] = data[difficulty][category][:10]
-        LeaderboardManager.save(data)
-
-    @staticmethod
-    def get_records(difficulty, category):
-        return LeaderboardManager.load().get(difficulty, {}).get(category, [])
-
-# ---Replay 管理---
-class ReplayManager:
-    RECORD_DIR = Path(__file__).resolve().parent / "Records"
-
-    @staticmethod
-    def ensure_record_dir():
-        ReplayManager.RECORD_DIR.mkdir(exist_ok=True)
-
-    @staticmethod
-    def save_replay(data):
-        ReplayManager.ensure_record_dir()
-        filename = f"replay_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        filepath = ReplayManager.RECORD_DIR / filename
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return filepath
-
-    @staticmethod
-    def load_replay(filepath):
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not all(k in data for k in ("version", "board", "history")):
-            raise ValueError("無效的 Replay 檔案格式")
-        return data
-
-    @staticmethod
-    def get_replay_list():
-        ReplayManager.ensure_record_dir()
-        result = []
-        for path in sorted(ReplayManager.RECORD_DIR.glob("*.json"), reverse=True):
-            try:
-                data = ReplayManager.load_replay(path)
-                meta = data.get("meta", {})
-                result.append({
-                    "filepath": path,
-                    "player_id": meta.get("player_id", "?"),
-                    "player_color": meta.get("player_color", "#000000"),
-                    "difficulty": meta.get("difficulty", "?"),
-                    "result": meta.get("result", "?"),
-                    "time_sec": meta.get("time_sec", 0),
-                    "date": meta.get("date", "")[:10]
-                })
-            except Exception:
-                pass
-        return result
 
 # 將視窗置中顯示於螢幕中央
 def center_window(window):
@@ -301,6 +213,7 @@ class GameSettingsDialog(tk.Toplevel):
 class MinesweeperUI(tk.Frame):
     def __init__(self, parent, logic, player_id, player_color, radar_uses, on_close_callback):
         super().__init__(parent)
+        self.main_app = parent  # MainMenu 實例，用於存取帳號與登入視窗
         self.logic = logic
         self.player_id = player_id
         self.player_color = player_color
@@ -477,7 +390,7 @@ class MinesweeperUI(tk.Frame):
                     self.expand(nr, nc)
         if not from_replay: self.check_win()
 
-    # 遊戲結束流程：停止計時並詢問是否儲存 Replay
+    # 遊戲結束流程：停止計時並顯示結束對話框
     def end_game_flow(self, message, result="lose"):
         self.timer_running = False
         if self.history:
@@ -486,21 +399,87 @@ class MinesweeperUI(tk.Frame):
             messagebox.showinfo("遊戲結束", message)
             self.exit_game()
 
-    # 遊戲結束對話框：顯示結果並詢問是否儲存 Replay
+    # 遊戲結束對話框：三個按鈕（儲存紀錄 / 上傳排名 / 返回主選單）
     def _show_end_dialog(self, message, result):
+        difficulty = DIFFICULTY_PRESETS.get(
+            (self.logic.rows, self.logic.cols, self.logic.mines_count))
+        can_rank = (result == "win" and difficulty is not None)
+
         dialog = tk.Toplevel(self)
         dialog.title("遊戲結束")
+        dialog.resizable(False, False)
         center_window(dialog)
         dialog.transient(self)
         dialog.grab_set()
+
         tk.Label(dialog, text=message, font=("微軟正黑體", 11), pady=16).pack()
-        tk.Label(dialog, text="是否儲存 Replay？", font=("微軟正黑體", 10)).pack()
+
+        if not can_rank:
+            reason = "自訂模式不入榜" if result == "win" else "遊戲失敗不入榜"
+            tk.Label(dialog, text=f"（{reason}）",
+                     font=("微軟正黑體", 9), fg="gray").pack(pady=(0, 4))
+
         btn_frame = tk.Frame(dialog)
         btn_frame.pack(pady=12)
-        tk.Button(btn_frame, text="儲存", width=10,
-                  command=lambda: self._save_replay_file(result, dialog)).pack(side="left", padx=10)
-        tk.Button(btn_frame, text="不儲存", width=10,
-                  command=lambda: [dialog.destroy(), self.exit_game()]).pack(side="left", padx=10)
+
+        tk.Button(btn_frame, text="儲存遊戲紀錄", width=13,
+                  command=lambda: self._on_save_record(result, dialog)
+                  ).pack(side="left", padx=6)
+
+        tk.Button(btn_frame, text="上傳排名", width=10,
+                  state=tk.NORMAL if can_rank else tk.DISABLED,
+                  command=lambda: self._on_upload_rank(difficulty, dialog)
+                  ).pack(side="left", padx=6)
+
+        tk.Button(btn_frame, text="返回主選單", width=10,
+                  command=lambda: [dialog.destroy(), self.exit_game()]
+                  ).pack(side="left", padx=6)
+
+    def _on_save_record(self, result, dialog):
+        if self.main_app.account is None:
+            dialog.grab_release()
+            def _after():
+                if dialog.winfo_exists():
+                    dialog.lift()
+                    dialog.grab_set()
+                    self._do_save_record(result, dialog)
+            self.main_app.show_login_window(callback=_after)
+            return
+        self._do_save_record(result, dialog)
+
+    def _do_save_record(self, result, dialog):
+        pid = self.main_app.account["player_id"]
+        data = self._build_replay_data(result)
+        key = fb.upload_replay(pid, data)
+        if key:
+            messagebox.showinfo("已儲存", "遊戲紀錄已上傳至雲端。", parent=dialog)
+        else:
+            messagebox.showerror("上傳失敗", "無法連線至伺服器，請確認網路連線。", parent=dialog)
+
+    def _on_upload_rank(self, difficulty, dialog):
+        if self.main_app.account is None:
+            dialog.grab_release()
+            def _after():
+                if dialog.winfo_exists():
+                    dialog.lift()
+                    dialog.grab_set()
+                    self._do_upload_rank(difficulty, dialog)
+            self.main_app.show_login_window(callback=_after)
+            return
+        self._do_upload_rank(difficulty, dialog)
+
+    def _do_upload_rank(self, difficulty, dialog):
+        pid   = self.main_app.account["player_id"]
+        color = self.main_app.account.get("color", "#000000")
+        ok = fb.upload_score(difficulty, pid, color, self.elapsed_time, "unlimited")
+        if self.radar_used_count == 0:
+            fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item")
+            if self.flag_used_count == 0:
+                fb.upload_score(difficulty, pid, color, self.elapsed_time, "no_item_no_flag")
+        if ok:
+            messagebox.showinfo("已上傳", "排名已上傳至雲端排行榜。", parent=dialog)
+        else:
+            messagebox.showerror("上傳失敗", "無法連線至伺服器，請確認網路連線。", parent=dialog)
 
     # 打包本局所有資料為 Replay dict
     def _build_replay_data(self, result):
@@ -525,15 +504,6 @@ class MinesweeperUI(tk.Frame):
             "board": self.logic.board,
             "history": [list(h) for h in self.history]
         }
-
-    # 將 Replay 儲存至 Records 資料夾並顯示成功訊息
-    def _save_replay_file(self, result, dialog):
-        data = self._build_replay_data(result)
-        filepath = ReplayManager.save_replay(data)
-        rel = filepath.relative_to(Path(__file__).resolve().parent)
-        dialog.destroy()
-        messagebox.showinfo("Replay 已儲存", str(rel))
-        self.exit_game()
 
     # 重置盤面視覺狀態並進入回放模式；傳入 history 時覆蓋目前紀錄（供檔案回放使用）
     def start_replay(self, history=None):
@@ -801,19 +771,7 @@ class MinesweeperUI(tk.Frame):
         if (self.logic.rows * self.logic.cols) - self.logic.get_revealed_count() == self.logic.mines_count:
             self.timer_running = False
             self.elapsed_time = self._elapsed()
-            self._save_score()
             self.end_game_flow(f"勝利！恭喜 {self.player_id}！\n總耗時: {self.elapsed_time:.3f} 秒", result="win")
-
-    # 依難度與挑戰限制將本局成績寫入排行榜（自訂模式不入榜）
-    def _save_score(self):
-        difficulty = DIFFICULTY_PRESETS.get((self.logic.rows, self.logic.cols, self.logic.mines_count))
-        if difficulty is None:
-            return
-        LeaderboardManager.add_record(difficulty, "normal", self.player_id, self.player_color, self.elapsed_time)
-        if self.radar_used_count == 0:
-            LeaderboardManager.add_record(difficulty, "no_tool", self.player_id, self.player_color, self.elapsed_time)
-            if self.flag_used_count == 0:
-                LeaderboardManager.add_record(difficulty, "no_tool_no_flag", self.player_id, self.player_color, self.elapsed_time)
 
     # 執行金屬探測器效果，依模式揭示十字或九宮格範圍內的所有格子
     def use_radar(self, r, c, mode):
@@ -870,7 +828,7 @@ class MinesweeperUI(tk.Frame):
 # --- 排行榜視窗 ---
 class LeaderboardWindow(tk.Toplevel):
     _DIFF = {"簡單": "easy", "普通": "normal", "困難": "hard"}
-    _CAT  = {"無限制": "normal", "無道具": "no_tool", "無道具無旗子": "no_tool_no_flag"}
+    _CAT  = {"無限制": "unlimited", "無道具": "no_item", "無道具無旗子": "no_item_no_flag"}
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -903,26 +861,32 @@ class LeaderboardWindow(tk.Toplevel):
         self.transient(parent)
 
     def refresh(self):
-        records = LeaderboardManager.get_records(
-            self._DIFF[self.diff_var.get()], self._CAT[self.cat_var.get()])
+        diff = self._DIFF[self.diff_var.get()]
+        cat  = self._CAT[self.cat_var.get()]
+        records = fb.get_leaderboard(diff, cat)
         self.tree.delete(*self.tree.get_children())
+        if records is None:
+            messagebox.showerror("錯誤", "無法連線至伺服器，請確認網路連線。", parent=self)
+            return
         for i, rec in enumerate(records, 1):
             color = rec.get("player_color", "#000000")
             tag = f"c{color[1:]}"
             self.tree.tag_configure(tag, foreground=color)
             self.tree.insert("", "end", values=(
-                i, rec["player_id"], f"{rec['time']:.3f} 秒", rec["date"][:10]), tags=(tag,))
+                i, rec["player_id"], f"{rec['time_sec']:.3f} 秒", rec.get("date", "")[:10]
+            ), tags=(tag,))
 
 # --- 回放清單視窗 ---
 class ReplayListWindow(tk.Toplevel):
     _DIFF_LABEL   = {"easy": "簡單", "normal": "普通", "hard": "困難", "custom": "自訂"}
     _RESULT_LABEL = {"win": "勝利", "lose": "失敗"}
 
-    def __init__(self, parent):
+    def __init__(self, parent, account: dict):
         super().__init__(parent)
         self.title("回放記錄")
         self.resizable(False, False)
-        self.parent = parent
+        self._parent  = parent
+        self._account = account
 
         self.tree = ttk.Treeview(self,
             columns=("player", "diff", "result", "time", "date"),
@@ -945,9 +909,15 @@ class ReplayListWindow(tk.Toplevel):
         self.transient(parent)
 
     def refresh(self):
-        self._records = ReplayManager.get_replay_list()
+        pid = self._account["player_id"]
+        records = fb.get_replay_list(pid)
         self.tree.delete(*self.tree.get_children())
-        for rec in self._records:
+        if records is None:
+            messagebox.showerror("錯誤", "無法連線至伺服器，請確認網路連線。", parent=self)
+            self._records = []
+            return
+        self._records = records
+        for rec in records:
             color = rec["player_color"]
             tag = f"c{color[1:]}"
             self.tree.tag_configure(tag, foreground=color)
@@ -962,16 +932,15 @@ class ReplayListWindow(tk.Toplevel):
     def play_selected(self):
         sel = self.tree.selection()
         if not sel:
-            messagebox.showwarning("提示", "請先選擇一筆回放記錄。")
+            messagebox.showwarning("提示", "請先選擇一筆回放記錄。", parent=self)
             return
         idx = self.tree.index(sel[0])
-        try:
-            data = ReplayManager.load_replay(self._records[idx]["filepath"])
-        except Exception as e:
-            messagebox.showerror("載入失敗", str(e))
+        data = self._records[idx]["full_data"]
+        if not all(k in data for k in ("version", "board", "history")):
+            messagebox.showerror("載入失敗", "無效的回放資料格式。", parent=self)
             return
         self.destroy()
-        self.parent.play_replay(data)
+        self._parent.play_replay(data)
 
     def delete_selected(self):
         sel = self.tree.selection()
@@ -979,9 +948,173 @@ class ReplayListWindow(tk.Toplevel):
             return
         idx = self.tree.index(sel[0])
         rec = self._records[idx]
-        if messagebox.askyesno("確認刪除", f"確定要刪除此回放記錄？\n{rec['filepath'].name}"):
-            rec["filepath"].unlink()
-            self.refresh()
+        if messagebox.askyesno("確認刪除", "確定要刪除此回放記錄？", parent=self):
+            ok = fb.delete_replay(self._account["player_id"], rec["record_id"])
+            if ok:
+                self.refresh()
+            else:
+                messagebox.showerror("刪除失敗", "無法連線至伺服器。", parent=self)
+
+# --- 登入視窗 ---
+class LoginWindow(tk.Toplevel):
+    def __init__(self, main_app, on_success=None):
+        super().__init__(main_app)
+        self._main_app  = main_app
+        self._on_success = on_success
+        self.title("玩家登入")
+        self.resizable(False, False)
+
+        tk.Label(self, text="玩家 ID:", font=("微軟正黑體", 11)).grid(
+            row=0, column=0, padx=16, pady=10, sticky="e")
+        self.id_entry = tk.Entry(self, width=22)
+        self.id_entry.grid(row=0, column=1, padx=12, pady=10)
+
+        tk.Label(self, text="Recovery Key:", font=("微軟正黑體", 11)).grid(
+            row=1, column=0, padx=16, pady=6, sticky="e")
+        self.key_entry = tk.Entry(self, width=22)
+        self.key_entry.grid(row=1, column=1, padx=12, pady=6)
+
+        btn_frame = tk.Frame(self)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        tk.Button(btn_frame, text="登入", width=9, command=self._on_login).pack(side="left", padx=8)
+        tk.Button(btn_frame, text="取消", width=9, command=self.destroy).pack(side="left", padx=8)
+
+        link_frame = tk.Frame(self)
+        link_frame.grid(row=3, column=0, columnspan=2, pady=(0, 10))
+        tk.Label(link_frame, text="沒有帳號？", font=("微軟正黑體", 10)).pack(side="left")
+        tk.Button(link_frame, text="點此註冊", font=("微軟正黑體", 10),
+                  relief="flat", fg="blue", cursor="hand2",
+                  command=self._open_register).pack(side="left")
+
+        center_window(self)
+        self.transient(main_app)
+        self.grab_set()
+
+    def _on_login(self):
+        pid = self.id_entry.get().strip()
+        key = self.key_entry.get().strip()
+        if not pid or not key:
+            messagebox.showwarning("提示", "請輸入玩家 ID 與 Recovery Key", parent=self)
+            return
+        key_hash = acc.hash_key(key)
+        ok, result = fb.verify_login(pid, key_hash)
+        if ok:
+            color   = result
+            account = acc.save(pid, color, key)
+            self._main_app.account = account
+            self._main_app._refresh_login_status()
+            cb = self._on_success
+            self.destroy()
+            if cb:
+                cb()
+        else:
+            messagebox.showerror("登入失敗", result, parent=self)
+
+    def _open_register(self):
+        cb = self._on_success
+        self.destroy()
+        RegisterWindow(self._main_app, on_success=cb)
+
+
+# --- 註冊視窗 ---
+class RegisterWindow(tk.Toplevel):
+    def __init__(self, main_app, on_success=None):
+        super().__init__(main_app)
+        self._main_app   = main_app
+        self._on_success = on_success
+        self.title("建立帳號")
+        self.resizable(False, False)
+        self.player_color = "#000000"
+
+        tk.Label(self, text="玩家 ID:", font=("微軟正黑體", 11)).grid(
+            row=0, column=0, padx=16, pady=10, sticky="e")
+        self.id_entry = tk.Entry(self, width=22)
+        self.id_entry.grid(row=0, column=1, padx=12, pady=10)
+
+        tk.Label(self, text="ID 顏色:", font=("微軟正黑體", 11)).grid(
+            row=1, column=0, padx=16, pady=6, sticky="e")
+        self.color_btn = tk.Button(self, text="選擇顏色",
+                                   bg=self.player_color, fg="white",
+                                   command=self._pick_color)
+        self.color_btn.grid(row=1, column=1, padx=12, pady=6, sticky="we")
+
+        btn_frame = tk.Frame(self)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=12)
+        tk.Button(btn_frame, text="註冊", width=9, command=self._on_register).pack(side="left", padx=8)
+        tk.Button(btn_frame, text="取消", width=9, command=self.destroy).pack(side="left", padx=8)
+
+        center_window(self)
+        self.transient(main_app)
+        self.grab_set()
+
+    def _pick_color(self):
+        color = colorchooser.askcolor(title="選擇玩家 ID 顏色", parent=self)[1]
+        if color:
+            color = GameSettingsDialog._darken_if_bright(color)
+            self.player_color = color
+            self.color_btn.config(bg=color)
+
+    def _on_register(self):
+        pid = self.id_entry.get().strip()
+        if not pid:
+            messagebox.showwarning("提示", "請輸入玩家 ID", parent=self)
+            return
+        recovery_key = acc.generate_recovery_key()
+        key_hash     = acc.hash_key(recovery_key)
+        ok, err = fb.register_user(pid, self.player_color, key_hash)
+        if not ok:
+            messagebox.showerror("註冊失敗", err, parent=self)
+            return
+        account = acc.save(pid, self.player_color, recovery_key)
+        self._main_app.account = account
+        self._main_app._refresh_login_status()
+        cb = self._on_success
+        self.destroy()
+        RecoveryKeyDialog(self._main_app, recovery_key, on_close=cb)
+
+
+# --- Recovery Key 提示視窗 ---
+class RecoveryKeyDialog(tk.Toplevel):
+    def __init__(self, parent, recovery_key: str, on_close=None):
+        super().__init__(parent)
+        self.title("請保存 Recovery Key")
+        self.resizable(False, False)
+        self._on_close = on_close
+
+        tk.Label(self, text="請保存您的 Recovery Key",
+                 font=("微軟正黑體", 12, "bold"), pady=14).pack()
+
+        key_frame = tk.Frame(self, relief="ridge", bd=2, padx=20, pady=14)
+        key_frame.pack(padx=24, pady=4)
+        tk.Label(key_frame, text=recovery_key,
+                 font=("Courier New", 16, "bold"), fg="#c0392b").pack()
+
+        tk.Label(self,
+                 text="此金鑰可用來在其他裝置登入。\n系統不會再次顯示，請立即備份。",
+                 font=("微軟正黑體", 10), fg="gray", pady=10).pack()
+
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(pady=(0, 14))
+        tk.Button(btn_frame, text="複製到剪貼簿", width=14,
+                  command=lambda: self._copy(recovery_key)).pack(side="left", padx=8)
+        tk.Button(btn_frame, text="我已備份，關閉", width=14,
+                  command=self._close).pack(side="left", padx=8)
+
+        center_window(self)
+        self.transient(parent)
+        self.grab_set()
+
+    def _copy(self, key):
+        self.clipboard_clear()
+        self.clipboard_append(key)
+        messagebox.showinfo("已複製", "Recovery Key 已複製到剪貼簿。", parent=self)
+
+    def _close(self):
+        cb = self._on_close
+        self.destroy()
+        if cb:
+            cb()
+
 
 # --- 主選單介面 ---
 class MainMenu(tk.Tk):
@@ -990,8 +1123,13 @@ class MainMenu(tk.Tk):
         self.title("踩地雷 - 遊戲選單")
         self.geometry("600x450")
         center_window(self)
-        self.last_player_id = "Unknown"    # 本次執行記憶的最後玩家 ID
-        self.last_player_color = "#000000" # 本次執行記憶的最後玩家顏色
+        self.account          = acc.load()   # 本機帳號 dict，未登入為 None
+        self._status_item     = None         # Canvas 登入狀態文字 ID
+        self.last_player_id    = "Unknown"
+        self.last_player_color = "#000000"
+        if self.account:
+            self.last_player_id    = self.account["player_id"]
+            self.last_player_color = self.account.get("color", "#000000")
         pygame.mixer.init()
         try:
             self.bg_image = ImageTk.PhotoImage(Image.open(ASSETS_DIR / "main_menu_bg.jpg").resize((600, 450)))
@@ -999,7 +1137,6 @@ class MainMenu(tk.Tk):
             self.bg_image = None
         self.show_main_menu()
 
-    #顯示主選單
     def show_main_menu(self):
         if hasattr(self, 'main_container'): self.main_container.destroy()
         self.geometry("600x450")
@@ -1008,34 +1145,72 @@ class MainMenu(tk.Tk):
             pygame.mixer.music.set_volume(0.5)
             pygame.mixer.music.play(-1)
         except: pass
-        
+
         self.main_container = tk.Frame(self)
         self.main_container.pack(fill="both", expand=True)
         self.canvas = tk.Canvas(self.main_container, width=600, height=450, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
-        
+
         if self.bg_image: self.canvas.create_image(0, 0, image=self.bg_image, anchor="nw")
         else: self.canvas.configure(bg="#b0d8d2")
-        
-        # 用兩個標題重疊陰影效果
+
         self.canvas.create_text(300, 40, text="踩地雷", font=("Verdana", 28, "bold"), fill="#f2d235")
         self.canvas.create_text(298, 38, text="踩地雷", font=("Verdana", 28, "bold"), fill="#191512")
-        
-        btn_style = {"font": ("微軟正黑體", 12, "bold"), "bg": "#8ea994", "fg": "white", "width": 12, "bd": 3, "relief": "ridge", "cursor": "hand2"}
-        
-        # 主選單按鈕
+
+        # 右上角登入狀態
+        self._status_item = None
+        self._draw_login_status()
+
+        btn_style = {"font": ("微軟正黑體", 12, "bold"), "bg": "#8ea994", "fg": "white",
+                     "width": 12, "bd": 3, "relief": "ridge", "cursor": "hand2"}
+
         menu_options = [
-            ("新遊戲", self.show_difficulty_menu),
-            ("回放記錄", lambda: ReplayListWindow(self)),
+            ("新遊戲",   self._on_new_game),
+            ("回放記錄", self._on_replay_records),
             ("查看排名", lambda: LeaderboardWindow(self)),
             ("退出遊戲", self.quit)
         ]
-        
+
         for i, (text, cmd) in enumerate(menu_options):
             btn = tk.Button(self.canvas, text=text, **btn_style, command=cmd)
             self.canvas.create_window(300, 150 + (i * 60), window=btn)
 
-    #難度選擇
+    def _draw_login_status(self):
+        if self._status_item:
+            self.canvas.delete(self._status_item)
+        if self.account:
+            pid   = self.account["player_id"]
+            color = self.account.get("color", "#000000")
+            self._status_item = self.canvas.create_text(
+                588, 14, text=pid, anchor="ne",
+                font=("微軟正黑體", 10, "bold"), fill=color)
+        else:
+            self._status_item = self.canvas.create_text(
+                588, 14, text="未登入", anchor="ne",
+                font=("微軟正黑體", 10), fill="gray")
+
+    def _refresh_login_status(self):
+        if self.account:
+            self.last_player_id    = self.account["player_id"]
+            self.last_player_color = self.account.get("color", "#000000")
+        if hasattr(self, 'canvas') and self.canvas.winfo_exists():
+            self._draw_login_status()
+
+    def _on_new_game(self):
+        if self.account is None:
+            self.show_login_window(callback=self.show_difficulty_menu)
+        else:
+            self.show_difficulty_menu()
+
+    def _on_replay_records(self):
+        if self.account is None:
+            self.show_login_window(callback=lambda: ReplayListWindow(self, self.account))
+        else:
+            ReplayListWindow(self, self.account)
+
+    def show_login_window(self, callback=None):
+        LoginWindow(self, on_success=callback)
+
     def show_difficulty_menu(self):
         self.main_container.destroy()
         self.main_container = tk.Frame(self)
