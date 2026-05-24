@@ -103,46 +103,56 @@ class MinesweeperLogic:
 # --- 設定視窗 ---
 class GameSettingsDialog(tk.Toplevel):
     def __init__(self, parent, default_r=8, default_c=8, default_m=8, is_custom=False,
-                 default_id="Unknown", default_color="#000000"):
+                 default_id="Unknown", default_color="#000000", show_player_fields=True):
         super().__init__(parent)
         self.title("遊戲設定")
         self.is_custom = is_custom
         self.result = None
         self.player_color = default_color
+        self._default_id = default_id
+        self._show_player_fields = show_player_fields
 
-        tk.Label(self, text="玩家 ID:").grid(row=0, column=0, padx=10, pady=5, sticky="e")
-        self.id_entry = tk.Entry(self)
-        self.id_entry.insert(0, default_id)
-        self.id_entry.grid(row=0, column=1, padx=10, pady=5)
+        row = 0
+        if show_player_fields:
+            tk.Label(self, text="玩家 ID:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
+            self.id_entry = tk.Entry(self)
+            self.id_entry.insert(0, default_id)
+            self.id_entry.grid(row=row, column=1, padx=10, pady=5)
+            row += 1
 
-        tk.Label(self, text="ID 顏色:").grid(row=1, column=0, padx=10, pady=5, sticky="e")
-        self.color_btn = tk.Button(self, text="選擇顏色", bg=self.player_color, fg="white", command=self.pick_color)
-        self.color_btn.grid(row=1, column=1, padx=10, pady=5, sticky="we")
+            tk.Label(self, text="ID 顏色:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
+            self.color_btn = tk.Button(self, text="選擇顏色", bg=self.player_color, fg="white", command=self.pick_color)
+            self.color_btn.grid(row=row, column=1, padx=10, pady=5, sticky="we")
+            row += 1
 
         # 預設探測器使用次數為 2
         self.radar_val = 2
 
         if is_custom:
-            tk.Label(self, text="列數 (5-27):").grid(row=2, column=0, padx=10, pady=5, sticky="e")
+            tk.Label(self, text="列數 (5-27):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
             self.r_entry = tk.Entry(self)
             self.r_entry.insert(0, str(default_r))
-            self.r_entry.grid(row=2, column=1, padx=10, pady=5)
+            self.r_entry.grid(row=row, column=1, padx=10, pady=5)
+            row += 1
 
-            tk.Label(self, text="行數 (5-44):").grid(row=3, column=0, padx=10, pady=5, sticky="e")
+            tk.Label(self, text="行數 (5-44):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
             self.c_entry = tk.Entry(self)
             self.c_entry.insert(0, str(default_c))
-            self.c_entry.grid(row=3, column=1, padx=10, pady=5)
+            self.c_entry.grid(row=row, column=1, padx=10, pady=5)
+            row += 1
 
             self.mine_range_label = tk.Label(self, text="地雷數量:")
-            self.mine_range_label.grid(row=4, column=0, padx=10, pady=5, sticky="e")
+            self.mine_range_label.grid(row=row, column=0, padx=10, pady=5, sticky="e")
             self.m_entry = tk.Entry(self)
             self.m_entry.insert(0, str(default_m))
-            self.m_entry.grid(row=4, column=1, padx=10, pady=5)
+            self.m_entry.grid(row=row, column=1, padx=10, pady=5)
+            row += 1
 
-            tk.Label(self, text="探測器次數:").grid(row=5, column=0, padx=10, pady=5, sticky="e")
+            tk.Label(self, text="探測器次數:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
             self.radar_entry = tk.Entry(self)
             self.radar_entry.insert(0, "2")
-            self.radar_entry.grid(row=5, column=1, padx=10, pady=5)
+            self.radar_entry.grid(row=row, column=1, padx=10, pady=5)
+            row += 1
 
             # 綁定列數與行數輸入框，即時更新地雷數量範圍標籤
             self.r_entry.bind("<KeyRelease>", self._update_mine_range_label)
@@ -151,7 +161,7 @@ class GameSettingsDialog(tk.Toplevel):
         else:
             self.r_val, self.c_val, self.m_val = default_r, default_c, default_m
 
-        tk.Button(self, text="開始遊戲", command=self.on_confirm).grid(row=6, column=0, columnspan=2, pady=10)
+        tk.Button(self, text="開始遊戲", command=self.on_confirm).grid(row=row, column=0, columnspan=2, pady=10)
         center_window(self)
         self.transient(parent)
         self.grab_set()
@@ -188,7 +198,10 @@ class GameSettingsDialog(tk.Toplevel):
 
     # 驗證輸入值並將結果打包為 tuple 存入 self.result，通過後關閉對話框
     def on_confirm(self):
-        p_id = self.id_entry.get().strip() or "Unknown"
+        if self._show_player_fields:
+            p_id = self.id_entry.get().strip() or "Unknown"
+        else:
+            p_id = self._default_id
         if self.is_custom:
             try:
                 r = int(self.r_entry.get())
@@ -1123,10 +1136,12 @@ class MainMenu(tk.Tk):
         self.title("踩地雷 - 遊戲選單")
         self.geometry("600x450")
         center_window(self)
-        self.account          = acc.load()   # 本機帳號 dict，未登入為 None
-        self._status_item     = None         # Canvas 登入狀態文字 ID
-        self.last_player_id    = "Unknown"
-        self.last_player_color = "#000000"
+        self.account             = acc.load()  # 本機帳號 dict，未登入為 None
+        self._status_item        = None        # Canvas 登入狀態文字 ID
+        self._logout_btn_window  = None        # Canvas 登出按鈕視窗 ID
+        self._current_bgm        = None        # 目前播放的背景音樂名稱
+        self.last_player_id      = "Unknown"
+        self.last_player_color   = "#000000"
         if self.account:
             self.last_player_id    = self.account["player_id"]
             self.last_player_color = self.account.get("color", "#000000")
@@ -1140,11 +1155,13 @@ class MainMenu(tk.Tk):
     def show_main_menu(self):
         if hasattr(self, 'main_container'): self.main_container.destroy()
         self.geometry("600x450")
-        try:
-            pygame.mixer.music.load(ASSETS_DIR / "menu_bgm.mp3")
-            pygame.mixer.music.set_volume(0.5)
-            pygame.mixer.music.play(-1)
-        except: pass
+        if self._current_bgm != "menu":
+            try:
+                pygame.mixer.music.load(ASSETS_DIR / "menu_bgm.mp3")
+                pygame.mixer.music.set_volume(0.5)
+                pygame.mixer.music.play(-1)
+                self._current_bgm = "menu"
+            except: pass
 
         self.main_container = tk.Frame(self)
         self.main_container.pack(fill="both", expand=True)
@@ -1157,9 +1174,9 @@ class MainMenu(tk.Tk):
         self.canvas.create_text(300, 40, text="踩地雷", font=("Verdana", 28, "bold"), fill="#f2d235")
         self.canvas.create_text(298, 38, text="踩地雷", font=("Verdana", 28, "bold"), fill="#191512")
 
-        # 右上角登入狀態
         self._status_item = None
-        self._draw_login_status()
+        self._logout_btn_window = None
+        self._draw_top_bar(show_logout=True)
 
         btn_style = {"font": ("微軟正黑體", 12, "bold"), "bg": "#8ea994", "fg": "white",
                      "width": 12, "bd": 3, "relief": "ridge", "cursor": "hand2"}
@@ -1175,18 +1192,33 @@ class MainMenu(tk.Tk):
             btn = tk.Button(self.canvas, text=text, **btn_style, command=cmd)
             self.canvas.create_window(300, 150 + (i * 60), window=btn)
 
-    def _draw_login_status(self):
+    def _draw_top_bar(self, show_logout=True):
         if self._status_item:
             self.canvas.delete(self._status_item)
+            self._status_item = None
+        if self._logout_btn_window:
+            self.canvas.delete(self._logout_btn_window)
+            self._logout_btn_window = None
         if self.account:
             pid   = self.account["player_id"]
             color = self.account.get("color", "#000000")
+            if show_logout:
+                logout_btn = tk.Button(
+                    self.canvas, text="登出",
+                    font=("微軟正黑體", 9, "bold"), bg="#8ea994", fg="white",
+                    bd=2, relief="ridge", cursor="hand2", padx=4,
+                    command=self._on_logout)
+                self._logout_btn_window = self.canvas.create_window(
+                    597, 6, window=logout_btn, anchor="ne")
+                text_x = 544
+            else:
+                text_x = 597
             self._status_item = self.canvas.create_text(
-                588, 14, text=pid, anchor="ne",
+                text_x, 14, text=pid, anchor="ne",
                 font=("微軟正黑體", 10, "bold"), fill=color)
         else:
             self._status_item = self.canvas.create_text(
-                588, 14, text="未登入", anchor="ne",
+                597, 14, text="未登入", anchor="ne",
                 font=("微軟正黑體", 10), fill="gray")
 
     def _refresh_login_status(self):
@@ -1194,7 +1226,42 @@ class MainMenu(tk.Tk):
             self.last_player_id    = self.account["player_id"]
             self.last_player_color = self.account.get("color", "#000000")
         if hasattr(self, 'canvas') and self.canvas.winfo_exists():
-            self._draw_login_status()
+            self._draw_top_bar(show_logout=True)
+
+    def _on_logout(self):
+        if not self.account:
+            return
+        pid = self.account["player_id"]
+        key = self.account.get("recovery_key", "")
+        dlg = tk.Toplevel(self)
+        dlg.title("確認登出")
+        dlg.resizable(False, False)
+        tk.Label(dlg, text=f"確定要登出「{pid}」嗎？",
+                 font=("微軟正黑體", 11, "bold"), pady=8).pack(padx=20)
+        tk.Label(dlg, text="請先備份你的 Recovery Key：",
+                 font=("微軟正黑體", 10)).pack(padx=20)
+        key_var = tk.StringVar(value=key)
+        tk.Entry(dlg, textvariable=key_var, state="readonly",
+                 font=("Courier", 11, "bold"), width=22, justify="center").pack(padx=20, pady=6)
+        btn_frame = tk.Frame(dlg)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="複製 Key",
+                  command=lambda: (dlg.clipboard_clear(), dlg.clipboard_append(key))).pack(side="left", padx=8)
+        tk.Button(btn_frame, text="確認登出",
+                  command=lambda: self._do_logout(dlg)).pack(side="left", padx=8)
+        tk.Button(btn_frame, text="取消",
+                  command=dlg.destroy).pack(side="left", padx=8)
+        center_window(dlg)
+        dlg.transient(self)
+        dlg.grab_set()
+
+    def _do_logout(self, dlg):
+        dlg.destroy()
+        acc.ACCOUNT_FILE.unlink(missing_ok=True)
+        self.account = None
+        self.last_player_id    = "Unknown"
+        self.last_player_color = "#000000"
+        self._refresh_login_status()
 
     def _on_new_game(self):
         if self.account is None:
@@ -1237,20 +1304,27 @@ class MainMenu(tk.Tk):
         back_btn = tk.Button(self.canvas, text="返回主選單", font=("微軟正黑體", 10), bg="#95a5a6", fg="white", command=self.show_main_menu)
         self.canvas.create_window(520, 410, window=back_btn)
 
-    # 開啟設定對話框並依回傳結果啟動遊戲；記憶本次輸入供下次開局預填
+        self._status_item = None
+        self._logout_btn_window = None
+        self._draw_top_bar(show_logout=False)
+
+    # 非自訂難度直接開始；自訂模式開啟設定對話框（不含玩家 ID / 顏色欄位）
     def pre_game_setup(self, r, c, m, is_custom):
-        dialog = GameSettingsDialog(self, r, c, m, is_custom,
-                                    default_id=self.last_player_id,
-                                    default_color=self.last_player_color)
-        if dialog.result:
-            r, c, m, p_id, p_color, radar_uses = dialog.result
-            self.last_player_id = p_id
-            self.last_player_color = p_color
-            self.start_game(r, c, m, p_id, p_color, radar_uses)
+        if not is_custom:
+            self.start_game(r, c, m, self.last_player_id, self.last_player_color, radar_uses=2)
+        else:
+            dialog = GameSettingsDialog(self, r, c, m, is_custom=True,
+                                        default_id=self.last_player_id,
+                                        default_color=self.last_player_color,
+                                        show_player_fields=False)
+            if dialog.result:
+                r, c, m, p_id, p_color, radar_uses = dialog.result
+                self.start_game(r, c, m, p_id, p_color, radar_uses)
 
     # 停止主選單音樂，建立遊戲邏輯與介面，並將視窗重新置中
     def start_game(self, r, c, m, p_id, p_color, radar_uses):
         pygame.mixer.music.stop()
+        self._current_bgm = None
         if hasattr(self, 'main_container'): self.main_container.destroy()
         self.geometry("")
         game_logic = MinesweeperLogic(r, c, m)
@@ -1260,6 +1334,7 @@ class MainMenu(tk.Tk):
     # 從 Replay 檔案建立邏輯層並直接啟動回放（略過 reset_board，直接載入儲存的 board）
     def play_replay(self, data):
         pygame.mixer.music.stop()
+        self._current_bgm = None
         if hasattr(self, 'main_container'): self.main_container.destroy()
         self.geometry("")
         s = data["settings"]

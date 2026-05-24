@@ -10,12 +10,15 @@ def _url(path: str) -> str:
 # ── 基礎 REST 操作 ────────────────────────────────────────────────────────────
 
 def _get_raw(path: str):
-    """回傳 (ok: bool, data). ok=False 表示網路/伺服器錯誤。"""
+    """回傳 (ok: bool, data).
+    ok=True  → data 為 JSON 內容（路徑不存在時為 None）。
+    ok=False → data 為 HTTP 狀態碼整數（伺服器有回應）或 None（網路異常）。
+    """
     try:
         r = requests.get(_url(path), timeout=_TIMEOUT)
         if r.status_code == 200:
             return True, r.json()
-        return False, None
+        return False, r.status_code
     except Exception:
         return False, None
 
@@ -85,8 +88,12 @@ def verify_login(player_id: str, recovery_key_hash: str) -> tuple[bool, str]:
     if user_data is None:
         return False, "找不到此玩家 ID"
     ok, auth_data = _get_raw(f"auth/{player_id}")
-    if not ok or auth_data is None:
+    if not ok:
+        if auth_data in (401, 403):
+            return False, "伺服器拒絕存取（Firebase 安全規則未開放 auth/ 讀取）"
         return False, "網路錯誤，請稍後再試"
+    if auth_data is None:
+        return False, "找不到驗證資料"
     if auth_data.get("recovery_key_hash", "") == recovery_key_hash:
         color = user_data.get("color", "#000000")
         return True, color

@@ -178,7 +178,7 @@ def center_window(window)
 
 | 函式 | 說明 |
 |------|------|
-| `_get_raw(path) → (bool, any)` | GET 並回傳 `(ok, data)`；網路錯誤回傳 `(False, None)` |
+| `_get_raw(path) → (bool, any)` | GET 並回傳 `(ok, data)`；`ok=True` 時 `data` 為 JSON 內容（路徑不存在為 `None`）；`ok=False` 時 `data` 為 HTTP 狀態碼整數（伺服器有回應）或 `None`（網路異常） |
 | `_put(path, data) → bool` | PUT，回傳是否成功 |
 | `_post(path, data) → str \| None` | POST（Firebase push），回傳新節點 key 或 None |
 | `_delete(path) → bool` | DELETE，回傳是否成功 |
@@ -190,7 +190,7 @@ def center_window(window)
 |------|------|
 | `user_exists(player_id) → bool \| None` | `True`=存在，`False`=不存在，`None`=網路錯誤 |
 | `register_user(player_id, color, hash) → (bool, str \| None)` | 先查重，再同時寫 `users/{pid}` 與 `auth/{pid}`；回傳 `(成功, 錯誤訊息)` |
-| `verify_login(player_id, hash) → (bool, str)` | 讀 `users/{pid}` 驗存在、讀 `auth/{pid}` 比對 hash；成功回傳 `(True, color)`，失敗回傳 `(False, 錯誤訊息)` |
+| `verify_login(player_id, hash) → (bool, str)` | 讀 `users/{pid}` 驗存在、讀 `auth/{pid}` 比對 hash；成功回傳 `(True, color)`，失敗回傳 `(False, 錯誤訊息)`；若 `auth/` 回傳 HTTP 401/403 則提示「Firebase 安全規則未開放 auth/ 讀取」 |
 
 #### Firebase 資料結構
 
@@ -329,9 +329,12 @@ class GameSettingsDialog(tk.Toplevel)
 | `default_r` | int | 8 | 預設列數 |
 | `default_c` | int | 8 | 預設行數 |
 | `default_m` | int | 8 | 預設地雷數 |
-| `is_custom` | bool | False | 是否顯示自訂輸入欄位 |
-| `default_id` | str | `"Unknown"` | 預填的玩家 ID（由 `MainMenu.last_player_id` 帶入） |
-| `default_color` | str | `"#000000"` | 預填的 ID 顏色（由 `MainMenu.last_player_color` 帶入） |
+| `is_custom` | bool | False | 是否顯示自訂輸入欄位（列數、行數、地雷數、探測次數） |
+| `default_id` | str | `"Unknown"` | 備用玩家 ID（`show_player_fields=False` 時直接使用，不顯示輸入框） |
+| `default_color` | str | `"#000000"` | 備用 ID 顏色（`show_player_fields=False` 時直接使用） |
+| `show_player_fields` | bool | True | 是否顯示「玩家 ID」與「ID 顏色」欄位；自訂模式傳入 `False` 以隱藏這兩個欄位 |
+
+> **使用情境**：非自訂難度（簡單 / 普通 / 困難）點擊後直接呼叫 `start_game()`，完全不開啟此對話框。自訂模式開啟對話框時傳入 `show_player_fields=False`，玩家 ID 與顏色由帳號自動帶入。
 
 #### 靜態方法
 
@@ -643,21 +646,25 @@ class MainMenu(tk.Tk)
 | `last_player_id` | str | 本次執行中上一局的玩家 ID（從 account 同步） |
 | `last_player_color` | str | 本次執行中上一局的 ID 顏色（從 account 同步） |
 | `_status_item` | int \| None | Canvas 登入狀態文字的 item ID |
+| `_logout_btn_window` | int \| None | Canvas 登出按鈕的 `create_window` item ID；難度選擇頁不顯示時為 `None` |
+| `_current_bgm` | str \| None | 目前播放的背景音樂名稱（`"menu"` 或 `None`）；避免返回主選單時重複重啟音樂 |
 
 #### 方法
 
 | 方法 | 說明 |
 |------|------|
-| `show_main_menu()` | 顯示主選單（含背景圖、四個選單按鈕、右上角登入狀態） |
-| `_draw_login_status()` | 在 Canvas 右上角繪製「未登入」（灰色）或玩家 ID（帳號顏色） |
-| `_refresh_login_status()` | 更新 `last_player_id`/`last_player_color`，並重繪 Canvas 登入狀態文字 |
+| `show_main_menu()` | 顯示主選單（含背景圖、四個選單按鈕、右上角玩家 ID + 登出按鈕）；僅 `_current_bgm != "menu"` 時重新載入播放選單音樂 |
+| `show_difficulty_menu()` | 顯示難度選擇（簡單 / 普通 / 困難 / 自訂 + 返回）；右上角顯示玩家 ID 但**不顯示登出按鈕** |
+| `_draw_top_bar(show_logout=True)` | 在 Canvas 右上角繪製登入狀態；已登入時玩家 ID 顯示於「登出」按鈕左側（`show_logout=True`）或單獨靠右（`show_logout=False`）；未登入時顯示「未登入」 |
+| `_refresh_login_status()` | 更新 `last_player_id`/`last_player_color`，並以 `show_logout=True` 重繪頂部狀態列 |
+| `_on_logout()` | 開啟確認登出對話框（含玩家 ID、Recovery Key 顯示、複製按鈕、確認 / 取消） |
+| `_do_logout(dlg)` | 關閉對話框、刪除 `account.json`、清空 `self.account`、呼叫 `_refresh_login_status()` |
 | `_on_new_game()` | 未登入時開啟登入視窗（callback = `show_difficulty_menu`），否則直接進入難度選擇 |
 | `_on_replay_records()` | 未登入時開啟登入視窗（callback = 開啟 ReplayListWindow），否則直接開啟 |
 | `show_login_window(callback)` | 建立 `LoginWindow(self, on_success=callback)` |
-| `show_difficulty_menu()` | 顯示難度選擇（簡單 / 普通 / 困難 / 自訂 + 返回） |
-| `pre_game_setup(r, c, m, is_custom)` | 開啟 `GameSettingsDialog`（傳入 `default_id` / `default_color`），取得結果後更新 last 值並啟動遊戲 |
-| `start_game(r, c, m, p_id, p_color, radar_uses)` | 停止音樂、銷毀主選單容器、建立遊戲介面 |
-| `play_replay(data)` | 從回放 dict 建立 `MinesweeperLogic`（直接指定 `board`）、建立 `MinesweeperUI` 並呼叫 `start_replay(history=...)` |
+| `pre_game_setup(r, c, m, is_custom)` | 非自訂模式直接以帳號 ID / 顏色呼叫 `start_game()`；自訂模式開啟 `GameSettingsDialog(show_player_fields=False)` |
+| `start_game(r, c, m, p_id, p_color, radar_uses)` | 停止音樂（`_current_bgm = None`）、銷毀主選單容器、建立遊戲介面 |
+| `play_replay(data)` | 停止音樂（`_current_bgm = None`）、從回放 dict 建立 `MinesweeperLogic`（直接指定 `board`）、建立 `MinesweeperUI` 並呼叫 `start_replay(history=...)` |
 
 #### 畫面切換機制
 
@@ -839,21 +846,24 @@ False → 尚未翻開
 ```
 MainMenu.show_main_menu()
   → show_difficulty_menu()
-    → pre_game_setup()
-      → GameSettingsDialog（模態）
-        → start_game()
-          → MinesweeperUI（嵌入主視窗）
-            → 第一次 on_click() → reset_board() + 啟動計時器
-            → 持續 on_click() / on_right_click() / use_radar()
-            → 踩雷 or check_win() → end_game_flow()
-              → _show_end_dialog()
-                → [儲存] _save_replay_file() → ReplayManager.save_replay() → exit_game()
-                → [不儲存] exit_game()
-                  → show_main_menu()
+    → pre_game_setup(is_custom=False)
+        → start_game()  ← 簡單 / 普通 / 困難直接啟動，不開對話框
+    → pre_game_setup(is_custom=True)
+        → GameSettingsDialog(show_player_fields=False)（模態）
+          → start_game()
+            → MinesweeperUI（嵌入主視窗）
+              → 第一次 on_click() → reset_board() + 啟動計時器
+              → 持續 on_click() / on_right_click() / use_radar()
+              → 踩雷 or check_win() → end_game_flow()
+                → _show_end_dialog()
+                  → [儲存紀錄] _on_save_record() → fb.upload_replay() → exit_game()
+                  → [上傳排名] _on_upload_rank() → fb.upload_score()
+                  → [返回] exit_game()
+                    → show_main_menu()
 
 MainMenu.show_main_menu()
   → [回放記錄] ReplayListWindow
-    → play_selected() → ReplayManager.load_replay() → play_replay()
+    → play_selected() → play_replay()
       → MinesweeperUI（嵌入主視窗）
         → start_replay(history=...) → replay_step() → exit_game()
           → show_main_menu()
