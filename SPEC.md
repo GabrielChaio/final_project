@@ -410,6 +410,7 @@ class MinesweeperUI(tk.Frame)
 | `timer_running` | bool | 計時器是否運行中 |
 | `is_replaying` | bool | 是否處於回放模式 |
 | `radar_uses_left` | int | 金屬探測器剩餘次數 |
+| `_initial_radar_uses` | int | 本局初始探測器次數，供 `_seek_to_index` seek 時重置 `radar_uses_left` |
 | `radar_type` | tk.StringVar | 目前選擇的探測模式（`"none"` / `"cross"` / `"area"`） |
 | `_replay_index` | int | 下一個待執行的 history 步驟索引 |
 | `_replay_paused` | bool | 回放是否處於暫停狀態 |
@@ -445,7 +446,7 @@ class MinesweeperUI(tk.Frame)
 | `on_double_click(r, c, from_replay)` | 雙擊左鍵快速翻開；對已翻數字格，若周圍標記數等於格子數字則自動翻開剩餘未標記格 |
 | `expand(r, c)` | BFS 翻開格子；值為 0 時自動展開相鄰 8 格 |
 | `check_win()` | 判斷剩餘未翻格數是否等於地雷數；勝利時呼叫 `end_game_flow(result="win")` |
-| `use_radar(r, c, mode)` | 執行探測器效果、更新剩餘次數與剩餘地雷標籤；累計 `radar_used_count` |
+| `use_radar(r, c, mode)` | 執行探測器效果；無論是否回放皆扣除 `radar_uses_left`（回放時確保剩餘次數顯示正確）；非回放時另累計 `radar_used_count` 並記入 history |
 | `reveal_radar_cell(nr, nc)` | 揭示單一格：地雷顯示黃底 💣 並加入 `radar_mines`，安全格呼叫 expand |
 | `update_mine_count_label()` | 更新剩餘地雷標籤：`mines_count - len(radar_mines) - flag_count` |
 | `_elapsed() → float` | 回傳 `round(time.monotonic() - _start_ts, 3)`，即精確耗時（秒） |
@@ -461,7 +462,7 @@ class MinesweeperUI(tk.Frame)
 | `_execute_replay_record(record)` | 執行單一 history 紀錄（不更新 index 或時間戳），供 `replay_step` / `_replay_next` / `_seek_to_index` 共用 |
 | `_replay_smooth_tick()` | 每 200ms 根據 wall clock × 速度插值更新 `timer_label` 與滑塊；暫停或回放結束時自動停止 |
 | `replay_step()` | 逐步重播：以 `_replay_index` 驅動，依相鄰步驟時間戳差值（floor 1ms，無上限，除以速度倍率）排程下一步 |
-| `_seek_to_index(n)` | 同步 seek 至「最後執行步驟 = n」的盤面狀態，維持暫停（n=-1 代表回到初始狀態） |
+| `_seek_to_index(n)` | 同步 seek 至「最後執行步驟 = n」的盤面狀態，維持暫停（n=-1 代表回到初始狀態）；先重置 `radar_uses_left = _initial_radar_uses` 再重新執行 history，seek 完成後同步更新 `radar_count_label` |
 | `_seek_to_time(target_time)` | 以目標時間（秒）為目標，二分搜尋最近步驟後呼叫 `_seek_to_index` |
 | `_update_replay_buttons()` | 根據目前狀態更新四個控制元件的文字與啟用狀態 |
 | `_toggle_replay_pause()` | 切換暫停/繼續；回放結束後按鈕文字變為「返回」，點擊時呼叫 `exit_game()` |
@@ -670,8 +671,8 @@ class MainMenu(tk.Tk)
 | 方法 | 說明 |
 |------|------|
 | `show_main_menu()` | 顯示主選單（含背景圖、四個選單按鈕、右上角玩家 ID + 登出按鈕）；僅 `_current_bgm != "menu"` 時重新載入播放選單音樂 |
-| `show_difficulty_menu()` | 顯示難度選擇（簡單 / 普通 / 困難 / 自訂 + 返回）；右上角顯示玩家 ID 但**不顯示登出按鈕** |
-| `_draw_top_bar(show_logout=True)` | 在 Canvas 右上角繪製登入狀態；已登入時玩家 ID 顯示於「登出」按鈕左側（`show_logout=True`）或單獨靠右（`show_logout=False`）；未登入且 `show_logout=True` 時顯示「登入」按鈕與「未登入」文字；未登入且 `show_logout=False` 時僅顯示「未登入」文字 |
+| `show_difficulty_menu()` | 顯示難度選擇（簡單 / 普通 / 困難 / 自訂 + 返回）；右上角呼叫 `_draw_top_bar(show_logout=True)`，**登入 / 登出按鈕在此頁仍有效** |
+| `_draw_top_bar(show_logout=True)` | 在 Canvas 右上角繪製登入狀態；已登入時玩家 ID（底色為 ID 顏色、白色文字）顯示於「登出」按鈕左側（`show_logout=True`）或單獨靠右（`show_logout=False`）；未登入且 `show_logout=True` 時顯示「登入」按鈕與「未登入」黑底白字標籤；未登入且 `show_logout=False` 時僅顯示「未登入」黑底白字標籤 |
 | `_refresh_login_status()` | 更新 `last_player_id`/`last_player_color`，並以 `show_logout=True` 重繪頂部狀態列 |
 | `_on_logout()` | 開啟確認登出對話框（含玩家 ID、Recovery Key 顯示、複製按鈕、確認 / 取消） |
 | `_do_logout(dlg)` | 關閉對話框、刪除 `account.json`、清空 `self.account`、呼叫 `_refresh_login_status()` |

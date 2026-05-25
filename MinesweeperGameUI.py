@@ -248,8 +248,9 @@ class MinesweeperUI(tk.Frame):
         self.radar_used_count = 0 # 累計使用探測器次數，判定無道具榜資格
         self.flag_used_count = 0  # 曾插旗次數（取消後仍計），判定無道具無旗子榜資格
 
-        self.radar_uses_left = radar_uses 
-        self.radar_type = tk.StringVar(value="none") 
+        self.radar_uses_left    = radar_uses
+        self._initial_radar_uses = radar_uses  # 回放 seek 時重置用
+        self.radar_type = tk.StringVar(value="none")
             
         # 初始化 pygame 音效模組並載入各音效檔，失敗時靜默略過（音效設為 None）
         pygame.mixer.init()
@@ -658,9 +659,10 @@ class MinesweeperUI(tk.Frame):
 
     # 同步 seek 至「最後執行步驟 = n」的盤面狀態，維持暫停（n=-1 代表回到初始狀態）
     def _seek_to_index(self, n):
-        self.is_replaying = True
-        self.radar_mines  = set()
-        self.flag_count   = 0
+        self.is_replaying    = True
+        self.radar_mines     = set()
+        self.flag_count      = 0
+        self.radar_uses_left = self._initial_radar_uses  # 從初始值重新累計
         self.logic.revealed = [[False] * self.logic.cols for _ in range(self.logic.rows)]
         for r in range(self.logic.rows):
             for c in range(self.logic.cols):
@@ -673,6 +675,7 @@ class MinesweeperUI(tk.Frame):
         self._replay_game_base = game_t
         self._replay_wall_ref  = time.monotonic()
         self.update_mine_count_label()
+        self.radar_count_label.config(text=f"剩餘: {self.radar_uses_left}")
         self.timer_label.config(text=f"時間: {int(game_t)} 秒")
         self._replay_slider_busy = True
         self.replay_slider.set(game_t)
@@ -807,9 +810,9 @@ class MinesweeperUI(tk.Frame):
     # 執行金屬探測器效果，依模式揭示十字或九宮格範圍內的所有格子
     def use_radar(self, r, c, mode):
         if self.radar_sound and not self.is_replaying: self.radar_sound.play()
+        self.radar_uses_left -= 1  # 回放模式下也要扣除，確保剩餘次數顯示正確
         if not self.is_replaying:
             self.history.append(('radar', r, c, mode, self._elapsed()))
-            self.radar_uses_left -= 1
             self.radar_used_count += 1
         if mode == "area":
             for dr in [-1, 0, 1]:
@@ -1270,7 +1273,7 @@ class MainMenu(tk.Tk):
                 id_x, 6, window=id_label, anchor="ne")
         else:
             if show_logout:
-                # 未登入時顯示「登入」按鈕（格式同「登出」），並在其左側顯示「未登入」標籤
+                # 未登入時顯示「登入」按鈕（格式同「登出」），並在其左側顯示「未登入」黑底白字標籤
                 login_btn = tk.Button(
                     self.canvas, text="登入",
                     font=("微軟正黑體", 9, "bold"), bg="#8ea994", fg="white",
@@ -1278,13 +1281,19 @@ class MainMenu(tk.Tk):
                     command=self.show_login_window)
                 self._logout_btn_window = self.canvas.create_window(
                     597, 6, window=login_btn, anchor="ne")
-                self._status_item = self.canvas.create_text(
-                    544, 14, text="未登入", anchor="ne",
-                    font=("微軟正黑體", 10), fill="gray")
+                not_logged_label = tk.Label(
+                    self.canvas, text=" 未登入 ",
+                    font=("微軟正黑體", 10, "bold"), bg="black", fg="white",
+                    padx=2, pady=1)
+                self._status_item = self.canvas.create_window(
+                    544, 6, window=not_logged_label, anchor="ne")
             else:
-                self._status_item = self.canvas.create_text(
-                    597, 14, text="未登入", anchor="ne",
-                    font=("微軟正黑體", 10), fill="gray")
+                not_logged_label = tk.Label(
+                    self.canvas, text=" 未登入 ",
+                    font=("微軟正黑體", 10, "bold"), bg="black", fg="white",
+                    padx=2, pady=1)
+                self._status_item = self.canvas.create_window(
+                    597, 6, window=not_logged_label, anchor="ne")
 
     def _refresh_login_status(self):
         if self.account:
@@ -1377,7 +1386,7 @@ class MainMenu(tk.Tk):
 
         self._status_item = None
         self._logout_btn_window = None
-        self._draw_top_bar(show_logout=False)
+        self._draw_top_bar(show_logout=True)
 
     # 非自訂難度直接開始；自訂模式開啟設定對話框（不含玩家 ID / 顏色欄位）
     def pre_game_setup(self, r, c, m, is_custom):
