@@ -120,8 +120,7 @@ class GameSettingsDialog(tk.Toplevel):
         row = 0
         if show_player_fields:
             tk.Label(self, text="玩家 ID:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
-            val_cmd = self.register(self._validate_id_length)
-            self.id_entry = tk.Entry(self, validate="key", validatecommand=(val_cmd, '%P'))
+            self.id_entry = tk.Entry(self)
             self.id_entry.insert(0, default_id)
             self.id_entry.grid(row=row, column=1, padx=10, pady=5)
             row += 1
@@ -1077,7 +1076,8 @@ class RegisterWindow(tk.Toplevel):
 
         tk.Label(self, text="玩家 ID:", font=("微軟正黑體", 11)).grid(
             row=0, column=0, padx=16, pady=10, sticky="e")
-        self.id_entry = tk.Entry(self, width=22)
+        val_cmd = self.register(self._validate_id_length)
+        self.id_entry = tk.Entry(self, width=22, validate="key", validatecommand=(val_cmd, '%P'))
         self.id_entry.grid(row=0, column=1, padx=12, pady=10)
 
         tk.Label(self, text="ID 顏色:", font=("微軟正黑體", 11)).grid(
@@ -1095,6 +1095,12 @@ class RegisterWindow(tk.Toplevel):
         center_window(self)
         self.transient(main_app)
         self.grab_set()
+
+    def _validate_id_length(self, predicted_text):
+        if len(predicted_text) <= 10:
+            return True
+        else:
+            return False
 
     def _pick_color(self):
         color = colorchooser.askcolor(title="選擇玩家 ID 顏色", parent=self)[1]
