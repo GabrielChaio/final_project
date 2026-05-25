@@ -1,0 +1,4 @@
+pillow      # 圖片載入與縮放
+pygame      # 音效播放
+requests    # 資料庫 API 呼叫
+pyinstaller # 打包成執行檔
