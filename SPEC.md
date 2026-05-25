@@ -355,7 +355,16 @@ self.result = (rows, cols, mines, player_id, player_color, radar_uses)
 # player_color 為 HEX 色碼字串，例如 "#ff0000"
 ```
 
-#### 驗證規則（自訂模式）
+#### 輸入長度限制（自訂模式）
+
+| 欄位 | 字元上限 | 實作方式 |
+|------|----------|----------|
+| 列數 | 2 字元 | `validate="key"` + lambda |
+| 行數 | 2 字元 | `validate="key"` + lambda |
+| 地雷數量 | 3 字元 | `validate="key"` + lambda |
+| 探測器次數 | 2 字元 | `validate="key"` + lambda |
+
+#### 驗證規則（自訂模式，送出時檢查）
 
 | 欄位 | 限制 | 錯誤訊息 |
 |------|------|----------|
@@ -604,6 +613,13 @@ def __init__(self, main_app: MainMenu, on_success=None)
 ```
 
 顯示玩家 ID 輸入框、Recovery Key 輸入框、「登入」/「取消」按鈕，以及「點此註冊」連結。
+
+#### 輸入限制
+
+| 欄位 | 限制 | 實作方式 |
+|------|------|----------|
+| 玩家 ID | 最多 10 字元 | `validate="key"` + lambda |
+| Recovery Key | 最多 19 字元 | `validate="key"` + lambda |
 
 #### 行為
 

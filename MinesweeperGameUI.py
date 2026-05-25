@@ -134,27 +134,30 @@ class GameSettingsDialog(tk.Toplevel):
         self.radar_val = 2
 
         if is_custom:
+            val2 = self.register(lambda p: len(p) <= 2)
+            val3 = self.register(lambda p: len(p) <= 3)
+
             tk.Label(self, text="列數 (5-27):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
-            self.r_entry = tk.Entry(self)
+            self.r_entry = tk.Entry(self, validate="key", validatecommand=(val2, '%P'))
             self.r_entry.insert(0, str(default_r))
             self.r_entry.grid(row=row, column=1, padx=10, pady=5)
             row += 1
 
             tk.Label(self, text="行數 (5-44):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
-            self.c_entry = tk.Entry(self)
+            self.c_entry = tk.Entry(self, validate="key", validatecommand=(val2, '%P'))
             self.c_entry.insert(0, str(default_c))
             self.c_entry.grid(row=row, column=1, padx=10, pady=5)
             row += 1
 
             self.mine_range_label = tk.Label(self, text="地雷數量:")
             self.mine_range_label.grid(row=row, column=0, padx=10, pady=5, sticky="e")
-            self.m_entry = tk.Entry(self)
+            self.m_entry = tk.Entry(self, validate="key", validatecommand=(val3, '%P'))
             self.m_entry.insert(0, str(default_m))
             self.m_entry.grid(row=row, column=1, padx=10, pady=5)
             row += 1
 
             tk.Label(self, text="探測器次數(0~99):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
-            self.radar_entry = tk.Entry(self)
+            self.radar_entry = tk.Entry(self, validate="key", validatecommand=(val2, '%P'))
             self.radar_entry.insert(0, "2")
             self.radar_entry.grid(row=row, column=1, padx=10, pady=5)
             row += 1
@@ -1021,14 +1024,17 @@ class LoginWindow(tk.Toplevel):
         self.title("玩家登入")
         self.resizable(False, False)
 
+        val_id  = self.register(lambda p: len(p) <= 10)
+        val_key = self.register(lambda p: len(p) <= 19)
+
         tk.Label(self, text="玩家 ID:", font=("微軟正黑體", 11)).grid(
             row=0, column=0, padx=16, pady=10, sticky="e")
-        self.id_entry = tk.Entry(self, width=22)
+        self.id_entry = tk.Entry(self, width=22, validate="key", validatecommand=(val_id, '%P'))
         self.id_entry.grid(row=0, column=1, padx=12, pady=10)
 
         tk.Label(self, text="Recovery Key:", font=("微軟正黑體", 11)).grid(
             row=1, column=0, padx=16, pady=6, sticky="e")
-        self.key_entry = tk.Entry(self, width=22)
+        self.key_entry = tk.Entry(self, width=22, validate="key", validatecommand=(val_key, '%P'))
         self.key_entry.grid(row=1, column=1, padx=12, pady=6)
 
         btn_frame = tk.Frame(self)
