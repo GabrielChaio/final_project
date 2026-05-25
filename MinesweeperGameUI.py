@@ -153,7 +153,7 @@ class GameSettingsDialog(tk.Toplevel):
             self.m_entry.grid(row=row, column=1, padx=10, pady=5)
             row += 1
 
-            tk.Label(self, text="探測器次數:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
+            tk.Label(self, text="探測器次數(0~99):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
             self.radar_entry = tk.Entry(self)
             self.radar_entry.insert(0, "2")
             self.radar_entry.grid(row=row, column=1, padx=10, pady=5)
@@ -219,6 +219,7 @@ class GameSettingsDialog(tk.Toplevel):
                 max_m = int(r * c * 0.25)
                 if not (min_m <= m <= max_m): raise ValueError(f"地雷數量必須在 {min_m} 到 {max_m} 之間")
                 if radar < 0: raise ValueError("探測次數不能為負數")
+                if radar > 99: raise ValueError("探測次數不能超過99")
                 self.result = (r, c, m, p_id, self.player_color, radar)
                 self.destroy()
             except ValueError as e:
