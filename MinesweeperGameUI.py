@@ -445,7 +445,7 @@ class MinesweeperUI(tk.Frame):
                   command=lambda: self._on_save_record(result, dialog))
         self._end_btn_save.pack(side="left", padx=6)
 
-        self._end_btn_rank = tk.Button(btn_frame, text="上傳排名", width=10,
+        self._end_btn_rank = tk.Button(btn_frame, text="上傳至排行榜", width=14,
                   state=tk.NORMAL if can_rank else tk.DISABLED,
                   command=lambda: self._on_upload_rank(difficulty, dialog))
         self._end_btn_rank.pack(side="left", padx=6)
@@ -461,6 +461,9 @@ class MinesweeperUI(tk.Frame):
                 if dialog.winfo_exists():
                     dialog.lift()
                     dialog.grab_set()
+                    # 登入後以帳號資訊更新本局玩家資料，確保回放 meta 正確
+                    self.player_id    = self.main_app.account["player_id"]
+                    self.player_color = self.main_app.account.get("color", "#000000")
                     self._do_save_record(result, dialog)
             self.main_app.show_login_window(callback=_after)
             return
@@ -484,6 +487,9 @@ class MinesweeperUI(tk.Frame):
                 if dialog.winfo_exists():
                     dialog.lift()
                     dialog.grab_set()
+                    # 登入後以帳號資訊更新本局玩家資料，確保排行榜條目正確
+                    self.player_id    = self.main_app.account["player_id"]
+                    self.player_color = self.main_app.account.get("color", "#000000")
                     self._do_upload_rank(difficulty, dialog)
             self.main_app.show_login_window(callback=_after)
             return
@@ -1263,9 +1269,22 @@ class MainMenu(tk.Tk):
             self._status_item = self.canvas.create_window(
                 id_x, 6, window=id_label, anchor="ne")
         else:
-            self._status_item = self.canvas.create_text(
-                597, 14, text="未登入", anchor="ne",
-                font=("微軟正黑體", 10), fill="gray")
+            if show_logout:
+                # 未登入時顯示「登入」按鈕（格式同「登出」），並在其左側顯示「未登入」標籤
+                login_btn = tk.Button(
+                    self.canvas, text="登入",
+                    font=("微軟正黑體", 9, "bold"), bg="#8ea994", fg="white",
+                    bd=2, relief="ridge", cursor="hand2", padx=4,
+                    command=self.show_login_window)
+                self._logout_btn_window = self.canvas.create_window(
+                    597, 6, window=login_btn, anchor="ne")
+                self._status_item = self.canvas.create_text(
+                    544, 14, text="未登入", anchor="ne",
+                    font=("微軟正黑體", 10), fill="gray")
+            else:
+                self._status_item = self.canvas.create_text(
+                    597, 14, text="未登入", anchor="ne",
+                    font=("微軟正黑體", 10), fill="gray")
 
     def _refresh_login_status(self):
         if self.account:
@@ -1310,10 +1329,7 @@ class MainMenu(tk.Tk):
         self._refresh_login_status()
 
     def _on_new_game(self):
-        if self.account is None:
-            self.show_login_window(callback=self.show_difficulty_menu)
-        else:
-            self.show_difficulty_menu()
+        self.show_difficulty_menu()
 
     def _on_leaderboard(self):
         if not fb.is_online():

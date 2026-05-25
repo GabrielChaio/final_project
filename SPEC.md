@@ -451,10 +451,10 @@ class MinesweeperUI(tk.Frame)
 | `_elapsed() → float` | 回傳 `round(time.monotonic() - _start_ts, 3)`，即精確耗時（秒） |
 | `update_timer()` | 每 1000ms 讀取 monotonic 差值並以整數秒更新標籤 |
 | `end_game_flow(message, result="lose")` | 停止計時，若有歷史則呼叫 `_show_end_dialog()` |
-| `_show_end_dialog(message, result)` | 顯示遊戲結果與三個按鈕：儲存遊戲紀錄 / 上傳排名（勝利且非自訂時啟用）/ 返回主選單；將按鈕存為 `self._end_btn_save` / `self._end_btn_rank` |
-| `_on_save_record(result, dialog)` | 檢查帳號，若未登入先開 LoginWindow，登入後呼叫 `_do_save_record` |
+| `_show_end_dialog(message, result)` | 顯示遊戲結果與三個按鈕：儲存遊戲紀錄 / 上傳至排行榜（勝利且非自訂時啟用）/ 返回主選單；將按鈕存為 `self._end_btn_save` / `self._end_btn_rank` |
+| `_on_save_record(result, dialog)` | 檢查帳號，若未登入先開 LoginWindow；登入後以帳號 ID / 顏色更新 `self.player_id` / `self.player_color`，再呼叫 `_do_save_record` |
 | `_do_save_record(result, dialog)` | 呼叫 `fb.upload_replay()` 上傳至 `records/{player_id}/`；成功後禁用 `_end_btn_save` 防止重複上傳 |
-| `_on_upload_rank(difficulty, dialog)` | 檢查帳號，若未登入先開 LoginWindow，登入後呼叫 `_do_upload_rank` |
+| `_on_upload_rank(difficulty, dialog)` | 檢查帳號，若未登入先開 LoginWindow；登入後以帳號 ID / 顏色更新 `self.player_id` / `self.player_color`，再呼叫 `_do_upload_rank` |
 | `_do_upload_rank(difficulty, dialog)` | 呼叫 `_build_replay_data("win")` 建立回放，依 `radar_used_count` / `flag_used_count` 判定資格，呼叫 `fb.upload_score()` 上傳（回放直接嵌入排行榜條目）；成功後禁用 `_end_btn_rank` |
 | `_build_replay_data(result) → dict` | 封裝 version、meta、settings（`radar_uses = 剩餘次數 + 已用次數`）、board、history（tuple → list）為回放 dict |
 | `start_replay(history=None)` | 若傳入 `history` 則覆蓋 `self.history`；重置盤面視覺與回放狀態，在盤面下方建立控制列（暫停/繼續、倍速、上一步、下一步、時間軸滑塊），初始為暫停狀態 |
@@ -671,11 +671,11 @@ class MainMenu(tk.Tk)
 |------|------|
 | `show_main_menu()` | 顯示主選單（含背景圖、四個選單按鈕、右上角玩家 ID + 登出按鈕）；僅 `_current_bgm != "menu"` 時重新載入播放選單音樂 |
 | `show_difficulty_menu()` | 顯示難度選擇（簡單 / 普通 / 困難 / 自訂 + 返回）；右上角顯示玩家 ID 但**不顯示登出按鈕** |
-| `_draw_top_bar(show_logout=True)` | 在 Canvas 右上角繪製登入狀態；已登入時玩家 ID 顯示於「登出」按鈕左側（`show_logout=True`）或單獨靠右（`show_logout=False`）；未登入時顯示「未登入」 |
+| `_draw_top_bar(show_logout=True)` | 在 Canvas 右上角繪製登入狀態；已登入時玩家 ID 顯示於「登出」按鈕左側（`show_logout=True`）或單獨靠右（`show_logout=False`）；未登入且 `show_logout=True` 時顯示「登入」按鈕與「未登入」文字；未登入且 `show_logout=False` 時僅顯示「未登入」文字 |
 | `_refresh_login_status()` | 更新 `last_player_id`/`last_player_color`，並以 `show_logout=True` 重繪頂部狀態列 |
 | `_on_logout()` | 開啟確認登出對話框（含玩家 ID、Recovery Key 顯示、複製按鈕、確認 / 取消） |
 | `_do_logout(dlg)` | 關閉對話框、刪除 `account.json`、清空 `self.account`、呼叫 `_refresh_login_status()` |
-| `_on_new_game()` | 未登入時開啟登入視窗（callback = `show_difficulty_menu`），否則直接進入難度選擇 |
+| `_on_new_game()` | 直接呼叫 `show_difficulty_menu()`，不論登入狀態（未登入時以 `last_player_id="Unknown"` 進行遊戲） |
 | `_on_leaderboard()` | 離線時顯示警告並返回；在線時開啟 `LeaderboardWindow` |
 | `_on_replay_records()` | 離線時顯示警告並返回；在線且未登入時開啟登入視窗（callback = 開啟 ReplayListWindow）；在線已登入時直接開啟 |
 | `show_login_window(callback)` | 建立 `LoginWindow(self, on_success=callback)` |
@@ -862,21 +862,26 @@ False → 尚未翻開
 
 ```
 MainMenu.show_main_menu()
-  → show_difficulty_menu()
-    → pre_game_setup(is_custom=False)
-        → start_game()  ← 簡單 / 普通 / 困難直接啟動，不開對話框
-    → pre_game_setup(is_custom=True)
-        → GameSettingsDialog(show_player_fields=False)（模態）
-          → start_game()
-            → MinesweeperUI（嵌入主視窗）
-              → 第一次 on_click() → reset_board() + 啟動計時器
-              → 持續 on_click() / on_right_click() / use_radar()
-              → 踩雷 or check_win() → end_game_flow()
-                → _show_end_dialog()
-                  → [儲存紀錄] _on_save_record() → fb.upload_replay() → exit_game()
-                  → [上傳排名] _on_upload_rank() → fb.upload_score()
-                  → [返回] exit_game()
-                    → show_main_menu()
+  → [新遊戲]（不論登入狀態直接進入）
+    → show_difficulty_menu()
+      → pre_game_setup(is_custom=False)
+          → start_game()  ← 簡單 / 普通 / 困難直接啟動，不開對話框
+      → pre_game_setup(is_custom=True)
+          → GameSettingsDialog(show_player_fields=False)（模態）
+            → start_game()
+              → MinesweeperUI（嵌入主視窗）
+                → 第一次 on_click() → reset_board() + 啟動計時器
+                → 持續 on_click() / on_right_click() / use_radar()
+                → 踩雷 or check_win() → end_game_flow()
+                  → _show_end_dialog()
+                    → [儲存紀錄] _on_save_record()
+                        ├─ 已登入 → fb.upload_replay()
+                        └─ 未登入 → LoginWindow → 更新 player_id/player_color → fb.upload_replay()
+                    → [上傳至排行榜] _on_upload_rank()
+                        ├─ 已登入 → fb.upload_score()
+                        └─ 未登入 → LoginWindow → 更新 player_id/player_color → fb.upload_score()
+                    → [返回] exit_game()
+                      → show_main_menu()
 
 MainMenu.show_main_menu()
   → [回放記錄] ReplayListWindow
