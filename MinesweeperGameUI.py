@@ -120,7 +120,8 @@ class GameSettingsDialog(tk.Toplevel):
         row = 0
         if show_player_fields:
             tk.Label(self, text="玩家 ID:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
-            self.id_entry = tk.Entry(self)
+            val_cmd = self.register(self._validate_id_length)
+            self.id_entry = tk.Entry(self, validate="key", validatecommand=(val_cmd, '%P'))
             self.id_entry.insert(0, default_id)
             self.id_entry.grid(row=row, column=1, padx=10, pady=5)
             row += 1
